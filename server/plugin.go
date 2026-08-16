@@ -1,107 +1,14 @@
 package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-
-	"github.com/kandev/kandev/pkg/pluginsdk"
-)
-
-// eventCountStateKey is the Host state key this template uses to demonstrate
-// the GetState/SetState round trip: every task.created delivery increments a
-// persistent counter kept in kandev's state store, scoped to this plugin
-// instance. Delete this (and OnEvent) if your plugin doesn't handle events.
-const eventCountStateKey = "event_count"
-
-// templatePlugin implements pluginsdk.Plugin (via UnimplementedPlugin). It is
-// the one type you customize on the backend side: embed UnimplementedPlugin
-// for no-op defaults, then override only the RPCs you need
-// (OnEvent / HandleWebhook). Rename it to match your plugin.
-type templatePlugin struct {
-	pluginsdk.UnimplementedPlugin
-}
-
-var _ pluginsdk.Plugin = (*templatePlugin)(nil)
-
-// OnEvent is called for every event type declared in manifest.yaml's
-// capabilities.events. Here it logs the delivery and, when a Host has been
-// injected, increments a persistent counter through Host state. Returning an
-// error asks kandev to retry the delivery; return nil to acknowledge.
-func (p *templatePlugin) OnEvent(ctx context.Context, e *pluginsdk.Event) error {
-	log.Printf("event delivered: type=%s id=%s", e.EventType, e.EventID)
-
-	host := p.Host()
-	if host == nil {
-		// Host not injected yet (e.g. the broker dial is still in
-		// progress) — nothing more to do for this delivery.
-		return nil
-	}
-
-	count, err := incrementEventCount(ctx, host)
-	if err != nil {
-		return fmt.Errorf("kandev-plugin-template: updating event count in Host state: %w", err)
-	}
-	log.Printf("events counted via Host state: %d", count)
-	return nil
-}
-
-// incrementEventCount reads the current count from Host state (0 if unset),
-// writes back count+1, and returns the new count. Note numbers come back from
-// Host state as float64 (the values round-trip through a protobuf Struct on
-// the wire), so read them as float64 before converting.
-func incrementEventCount(ctx context.Context, host pluginsdk.Host) (int, error) {
-	value, found, err := host.GetState(ctx, "instance", "", eventCountStateKey)
-	if err != nil {
-		return 0, fmt.Errorf("reading %s: %w", eventCountStateKey, err)
-	}
-
-	count := 0
-	if found {
-		if c, ok := value["count"].(float64); ok {
-			count = int(c)
-		}
-	}
-	count++
-
-	if err := host.SetState(ctx, "instance", "", eventCountStateKey, map[string]any{"count": count}); err != nil {
-		return 0, fmt.Errorf("writing %s: %w", eventCountStateKey, err)
-	}
-	return count, nil
-}
-
-// HandleWebhook implements the webhooks declared in manifest.yaml. kandev
-// proxies POST /api/plugins/<id>/webhooks/<key> here; dispatch on
-// req.WebhookKey and return the status/body kandev should send back. This one
-// answers with a greeting built from the operator-configured settings, to
-// show a config read end to end.
-func (p *templatePlugin) HandleWebhook(ctx context.Context, req *pluginsdk.WebhookRequest) (*pluginsdk.WebhookResponse, error) {
-	log.Printf("webhook received: key=%s method=%s body=%s", req.WebhookKey, req.Method, string(req.Body))
-	body := fmt.Sprintf("%s, webhook!", p.greeting(ctx))
-	return &pluginsdk.WebhookResponse{Status: 200, Body: []byte(body)}, nil
-}
-
-// greeting reads this plugin's operator-editable settings through the Host
-// GetConfig RPC — the values saved on the plugin's settings page (the
-// manifest's config_schema). kandev restarts the plugin process whenever the
-// operator saves, so reading on demand always observes the current values.
-// Config is best-effort here: with no Host injected yet, or on an RPC error,
-// the greeting falls back to "Hello". A secret field like api_token arrives
-// in cleartext through this same call — the only surface where its real value
-// is visible.
-func (p *templatePlugin) greeting(ctx context.Context) string {
-	const fallback = "Hello"
-	host := p.Host()
-	if host == nil {
-		return fallback
-	}
-	config, err := host.GetConfig(ctx)
-	if err != nil {
-		log.Printf("reading plugin config: %v", err)
-		return fallback
-	}
-	if greeting, _ := config["greeting"].(string); greeting != "" {
-		return greeting
-	}
-	return fallback
-}
+import ("context"; "encoding/json"; "fmt"; "time"; "github.com/kandev/kandev/pkg/pluginsdk")
+const ( statusAction = "coordinator.status"; reportAction = "coordinator.report"; statusTool = "coordinator_status"; reportTool = "coordinator_record_report"; coordinatorStateKey = "coordinator_state" )
+type CoordinatorState struct { LastReportAt string `json:"last_report_at,omitempty"`; LastCycleAt string `json:"last_cycle_at,omitempty"`; Report string `json:"report,omitempty"` }
+type coordinatorPlugin struct { pluginsdk.UnimplementedPlugin }
+var ( _ pluginsdk.Plugin = (*coordinatorPlugin)(nil); _ pluginsdk.ActionHandler = (*coordinatorPlugin)(nil); _ pluginsdk.AgentToolPlugin = (*coordinatorPlugin)(nil) )
+func (p *coordinatorPlugin) state(ctx context.Context, workspaceID string) (CoordinatorState, error) { value, found, err := p.Host().GetState(ctx, "workspace", workspaceID, coordinatorStateKey); if err != nil || !found { return CoordinatorState{}, err }; lastReportAt, _ := value["last_report_at"].(string); lastCycleAt, _ := value["last_cycle_at"].(string); report, _ := value["report"].(string); return CoordinatorState{LastReportAt: lastReportAt, LastCycleAt: lastCycleAt, Report: report}, nil }
+func (p *coordinatorPlugin) saveReport(ctx context.Context, workspaceID, report string) (CoordinatorState, error) { if report == "" { return CoordinatorState{}, fmt.Errorf("report is required") }; now := time.Now().UTC().Format(time.RFC3339); state := CoordinatorState{LastReportAt: now, LastCycleAt: now, Report: report}; err := p.Host().SetState(ctx, "workspace", workspaceID, coordinatorStateKey, map[string]any{"last_report_at": state.LastReportAt, "last_cycle_at": state.LastCycleAt, "report": state.Report}); return state, err }
+func (p *coordinatorPlugin) status(ctx context.Context, workspaceID string) (map[string]any, error) { if p.Host() == nil { return nil, fmt.Errorf("coordinator: host unavailable") }; values, err := p.Host().GetConfig(ctx); if err != nil { return nil, err }; config, err := configFrom(values); if err != nil { return nil, err }; state, err := p.state(ctx, workspaceID); if err != nil { return nil, err }; next, err := nextStandup(time.Now(), config); if err != nil { return nil, err }; return map[string]any{"config": config, "state": state, "next_standup_at": next.UTC().Format(time.RFC3339)}, nil }
+func (p *coordinatorPlugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) { if req == nil || req.Context.WorkspaceID == "" { return nil, fmt.Errorf("coordinator: verified workspace context is required") }; switch req.ActionKey { case statusAction: status, err := p.status(ctx, req.Context.WorkspaceID); if err != nil { return nil, err }; return actionJSON(status); case reportAction: report, err := reqBodyReport(req.Body); if err != nil { return nil, err }; state, err := p.saveReport(ctx, req.Context.WorkspaceID, report); if err != nil { return nil, err }; return actionJSON(map[string]any{"state": state}); default: return nil, fmt.Errorf("coordinator: unknown action %q", req.ActionKey) } }
+func reqBodyReport(body []byte) (string, error) { var input struct { Report string `json:"report"` }; if err := json.Unmarshal(body, &input); err != nil { return "", fmt.Errorf("coordinator: decoding report: %w", err) }; return input.Report, nil }
+func actionJSON(value any) (*pluginsdk.PluginActionResponse, error) { body, err := json.Marshal(value); if err != nil { return nil, err }; return &pluginsdk.PluginActionResponse{Body: body, Headers: map[string]string{"Content-Type": "application/json"}}, nil }
+func (p *coordinatorPlugin) InvokeAgentTool(ctx context.Context, req *pluginsdk.AgentToolRequest) (*pluginsdk.AgentToolResult, error) { if req == nil || req.Context.WorkspaceID == "" { return &pluginsdk.AgentToolResult{Text: "A verified workspace context is required.", IsError: true}, nil }; if req.Name == statusTool { status, err := p.status(ctx, req.Context.WorkspaceID); if err != nil { return nil, err }; return toolJSON(status) }; if req.Name == reportTool { report, _ := req.Arguments["report"].(string); state, err := p.saveReport(ctx, req.Context.WorkspaceID, report); if err != nil { return &pluginsdk.AgentToolResult{Text: err.Error(), IsError: true}, nil }; return toolJSON(map[string]any{"state": state}) }; return &pluginsdk.AgentToolResult{Text: "Unknown coordinator tool.", IsError: true}, nil }
+func toolJSON(value map[string]any) (*pluginsdk.AgentToolResult, error) { body, err := json.Marshal(value); if err != nil { return nil, err }; return &pluginsdk.AgentToolResult{Text: string(body), StructuredContent: value}, nil }
