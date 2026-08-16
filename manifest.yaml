@@ -24,6 +24,9 @@ actions:
   - key: "coordinator.report"
     scope: workspace
     max_body_bytes: 65536
+  - key: "coordinator.workflow-policy"
+    scope: workspace
+    max_body_bytes: 65536
 agent_tools:
   - name: coordinator_status
     description: "Read coordinator schedule and last persisted report."
