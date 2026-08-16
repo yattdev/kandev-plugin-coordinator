@@ -93,6 +93,8 @@ verify-package: package
 		tar -xzf "$(PKG_OUT)" -C "$$tmp"; \
 		test -f "$$tmp/manifest.yaml"; \
 		test -f "$$tmp/ui/bundle.js"; \
+		test -f "$$tmp/prompts/coordinator.md"; \
+		test -f "$$tmp/prompts/RUNBOOK.md"; \
 		test -f "$$tmp/checksums.txt"; \
 		for executable in \
 			plugin-linux-amd64 plugin-linux-arm64 \
@@ -115,6 +117,8 @@ verify-package-host: package-host
 		host_executable="plugin-$$(go env GOOS)-$$(go env GOARCH)$$(go env GOEXE)"; \
 		test -f "$$tmp/manifest.yaml"; \
 		test -f "$$tmp/ui/bundle.js"; \
+		test -f "$$tmp/prompts/coordinator.md"; \
+		test -f "$$tmp/prompts/RUNBOOK.md"; \
 		test -f "$$tmp/checksums.txt"; \
 		test -f "$$tmp/server/$$host_executable"; \
 		test ! -e "$$tmp/recipes"; \
