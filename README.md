@@ -6,19 +6,9 @@ the Coordinator prompt as a versioned plugin asset.
 
 ## Runtime contract
 
-The backend keeps the most recent cycle/report in Kandev plugin state, scoped
-to the verified workspace. It exposes two authenticated workspace actions:
-`coordinator.status` and `coordinator.report`; it also exposes equivalent
-agent tools for coordinator conversations. The coordinator never accepts a
-workspace identifier from untrusted action data.
+The backend keeps reports and workflow policies in verified workspace state. Installation settings own cadence, agent profile, and the editable base prompt. Workflow settings select monitored worksteps and assign an optional prompt to each selected workstep. Each check composes base prompt, workstep prompt, and non-overridable safety invariants.
 
-Operator settings identify the coordinator task and configure the local
-weekday standup schedule. The plugin computes the next wake time; the host
-owns actual wake-job delivery.
-
-The UI uses the host-provided `AgentConversations` and `WorkspaceAgentChat`
-components. Until the matching host API is present, it displays an explicit
-compatibility message rather than bundling an alternate chat UI.
+The UI uses the host-provided `AgentConversations` and `WorkspaceAgentChat` components. Until the matching host API is present, it displays an explicit compatibility message rather than bundling an alternate chat UI.
 
 ## Development
 
