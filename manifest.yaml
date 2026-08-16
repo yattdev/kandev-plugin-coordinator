@@ -16,6 +16,7 @@ runtime:
     windows-amd64: "server/plugin-windows-amd64.exe"
 capabilities:
   state: true
+  api_read: [workflows]
 actions:
   - key: "coordinator.status"
     scope: workspace
@@ -43,7 +44,7 @@ ui:
 config_schema:
   type: object
   properties:
-    coordinator_task_id: {type: string, title: "Coordinator task ID"}
+    agent_profile: {type: string, format: agent-profile, title: "Coordinator agent profile"}
     timezone: {type: string, title: "Timezone", default: "America/Montreal"}
     standup_time: {type: string, title: "Weekday standup time", default: "07:55"}
     cycle_interval_minutes: {type: integer, title: "Cycle interval (minutes)", default: 45, minimum: 15, maximum: 240}
