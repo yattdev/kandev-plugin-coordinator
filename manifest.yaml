@@ -45,6 +45,7 @@ config_schema:
   type: object
   properties:
     agent_profile: {type: string, format: agent-profile, title: "Coordinator agent profile"}
+    base_prompt: {type: string, title: "Default coordinator base prompt", description: "Prepended to every configured workstep check. Safety invariants are always appended."}
     timezone: {type: string, title: "Timezone", default: "America/Montreal"}
     standup_time: {type: string, title: "Weekday standup time", default: "07:55"}
     cycle_interval_minutes: {type: integer, title: "Cycle interval (minutes)", default: 45, minimum: 15, maximum: 240}

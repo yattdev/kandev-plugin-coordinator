@@ -22,3 +22,10 @@ func TestNextStandupSkipsWeekend(t *testing.T) {
 	require.Equal(t, time.Monday, next.Weekday())
 	require.Equal(t, 17, next.Day())
 }
+
+func TestComposePromptAppendsSafetyInvariants(t *testing.T) {
+	prompt := composePrompt("base", "workstep")
+	require.Contains(t, prompt, "base")
+	require.Contains(t, prompt, "workstep")
+	require.Contains(t, prompt, "NON-OVERRIDABLE SAFETY INVARIANTS")
+}
