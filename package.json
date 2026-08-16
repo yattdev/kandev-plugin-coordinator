@@ -1,5 +1,5 @@
 {
-  "name": "kandev-plugin-template-contract-tests",
+  "name": "kandev-plugin-coordinator-contract-tests",
   "private": true,
   "type": "module",
   "engines": {

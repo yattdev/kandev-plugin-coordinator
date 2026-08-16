@@ -3,10 +3,10 @@
 
 # When you rename the plugin, update BIN and VERSION to match manifest.yaml's
 # id and version (PKG_OUT is derived from them).
-BIN := bin/kandev-plugin-template
+BIN := bin/kandev-plugin-coordinator
 VERSION := 0.1.0
 STAGE := .build/stage
-PKG_OUT := kandev-plugin-template-$(VERSION).tar.gz
+PKG_OUT := kandev-plugin-coordinator-$(VERSION).tar.gz
 
 # The sibling kandev checkout the `replace` in go.mod points at (see README,
 # "Developing against the SDK"). The packaging step runs plugin-pack from
@@ -62,6 +62,7 @@ package:
 	mkdir -p $(STAGE)/server
 	cp manifest.yaml $(STAGE)/manifest.yaml
 	cp -r ui $(STAGE)/ui
+	cp -r prompts $(STAGE)/prompts
 	GOOS=linux   GOARCH=amd64 go build -o $(STAGE)/server/plugin-linux-amd64       ./server
 	GOOS=linux   GOARCH=arm64 go build -o $(STAGE)/server/plugin-linux-arm64       ./server
 	GOOS=darwin  GOARCH=amd64 go build -o $(STAGE)/server/plugin-darwin-amd64      ./server
@@ -78,6 +79,7 @@ package-host:
 	mkdir -p $(STAGE)/server
 	cp manifest.yaml $(STAGE)/manifest.yaml
 	cp -r ui $(STAGE)/ui
+	cp -r prompts $(STAGE)/prompts
 	go build -o $(STAGE)/server/plugin-$$(go env GOOS)-$$(go env GOARCH)$$(go env GOEXE) ./server
 	cd $(KANDEV_SDK) && go run ./cmd/plugin-pack -dir $(CURDIR)/$(STAGE) -out $(CURDIR)/$(PKG_OUT) -platform-only
 	rm -rf $(STAGE)
@@ -124,4 +126,4 @@ verify-package-host: package-host
 		fi
 
 clean:
-	rm -rf bin $(STAGE) kandev-plugin-template-*.tar.gz
+	rm -rf bin $(STAGE) kandev-plugin-coordinator-*.tar.gz
