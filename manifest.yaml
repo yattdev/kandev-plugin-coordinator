@@ -16,7 +16,8 @@ runtime:
     windows-amd64: "server/plugin-windows-amd64.exe"
 capabilities:
   state: true
-  api_read: [workflows]
+  api_read: [workspaces, workflows]
+  api_write: [tasks, messages]
 actions:
   - key: "coordinator.status"
     scope: workspace

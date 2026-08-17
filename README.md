@@ -15,3 +15,12 @@ The UI uses the host-provided `AgentConversations` and `WorkspaceAgentChat` comp
 The SDK remains a local sibling checkout dependency. With the standard layout,
 run `make test-backend` and `make package-host`. The generated archive includes
 `prompts/coordinator.md`; it has no runtime dependency on the source prompt.
+
+### Local build recipe
+
+When the SDK checkout is elsewhere, use the shared Go workspace explicitly:
+
+```sh
+GOWORK=/tmp/coordinator-go.work mise exec -- make test
+GOWORK=/tmp/coordinator-go.work mise exec -- make verify-package-host KANDEV_SDK=/data/repos/workspaces/2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd/github/kdlbs/kandev/apps/backend
+```
