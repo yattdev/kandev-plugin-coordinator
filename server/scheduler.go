@@ -27,7 +27,7 @@ func (p *coordinatorPlugin) dispatchDue(ctx context.Context, now time.Time) erro
 	if config.AgentProfile == "" {
 		return fmt.Errorf("coordinator: agent_profile is required for scheduled runs")
 	}
-	workspaces, _, err := p.Host().Workspaces().List(ctx, pluginsdk.Page{Limit: 100})
+	workspaces, err := p.listAllWorkspaces(ctx)
 	if err != nil {
 		return err
 	}
@@ -37,6 +37,44 @@ func (p *coordinatorPlugin) dispatchDue(ctx context.Context, now time.Time) erro
 		}
 	}
 	return nil
+}
+
+func (p *coordinatorPlugin) listAllWorkspaces(ctx context.Context) ([]pluginsdk.Workspace, error) {
+	var all []pluginsdk.Workspace
+	page := pluginsdk.Page{Limit: 100}
+	for {
+		workspaces, info, err := p.Host().Workspaces().List(ctx, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, workspaces...)
+		if info == nil || !info.HasMore {
+			return all, nil
+		}
+		if info.NextCursor == "" {
+			return nil, fmt.Errorf("coordinator: workspace pagination returned has_more without next cursor")
+		}
+		page.Cursor = info.NextCursor
+	}
+}
+
+func (p *coordinatorPlugin) listAllWorkflows(ctx context.Context, workspaceID string) ([]pluginsdk.Workflow, error) {
+	var all []pluginsdk.Workflow
+	page := pluginsdk.Page{Limit: 100}
+	for {
+		workflows, info, err := p.Host().Workflows().List(ctx, workspaceID, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, workflows...)
+		if info == nil || !info.HasMore {
+			return all, nil
+		}
+		if info.NextCursor == "" {
+			return nil, fmt.Errorf("coordinator: workflow pagination returned has_more without next cursor")
+		}
+		page.Cursor = info.NextCursor
+	}
 }
 
 func (p *coordinatorPlugin) dispatchWorkspaceDue(ctx context.Context, now time.Time, workspaceID string, config Config) error {
@@ -52,7 +90,7 @@ func (p *coordinatorPlugin) dispatchWorkspaceDue(ctx context.Context, now time.T
 	if !cycleDue && !reportDue {
 		return nil
 	}
-	workflows, _, err := p.Host().Workflows().List(ctx, workspaceID, pluginsdk.Page{Limit: 100})
+	workflows, err := p.listAllWorkflows(ctx, workspaceID)
 	if err != nil {
 		return err
 	}
@@ -104,7 +142,7 @@ func (p *coordinatorPlugin) dispatchRun(ctx context.Context, workspaceID string,
 	task, err := p.Host().Tasks().Create(ctx, pluginsdk.CreateTaskInput{
 		WorkspaceID: workspaceID, WorkflowID: workflow.ID, WorkflowStepID: &stepID,
 		Title: title, Description: "Scheduled by the Coordinator plugin.", StartAgent: true,
-		Launch: &pluginsdk.PluginTaskLaunchOptions{AgentProfileID: &profileID},
+		Launch: &pluginsdk.PluginTaskLaunchOptions{AgentProfileID: &profileID, Prompt: &prompt},
 	})
 	if err != nil {
 		return err
@@ -112,8 +150,7 @@ func (p *coordinatorPlugin) dispatchRun(ctx context.Context, workspaceID string,
 	if task == nil || task.ID == "" {
 		return fmt.Errorf("coordinator: host returned an empty scheduled task")
 	}
-	_, err = p.Host().Messages().Send(ctx, task.ID, "", prompt)
-	return err
+	return nil
 }
 
 func dueSince(last string, now time.Time, interval time.Duration) bool {

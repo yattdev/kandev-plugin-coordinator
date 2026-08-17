@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -26,14 +27,48 @@ func (h *schedulerFakeHost) Messages() pluginsdk.MessageReader   { return schedu
 
 type schedulerWorkspaceReader struct{ host *schedulerFakeHost }
 
-func (r schedulerWorkspaceReader) List(context.Context, pluginsdk.Page) ([]pluginsdk.Workspace, *pluginsdk.PageInfo, error) {
-	return r.host.workspaces, nil, nil
+func (r schedulerWorkspaceReader) List(_ context.Context, page pluginsdk.Page) ([]pluginsdk.Workspace, *pluginsdk.PageInfo, error) {
+	return paginateTestItems(r.host.workspaces, page)
+}
+
+func paginateTestItems[T any](items []T, page pluginsdk.Page) ([]T, *pluginsdk.PageInfo, error) {
+	limit := int(page.Limit)
+	if limit <= 0 || limit > len(items) {
+		limit = len(items)
+	}
+	start := 0
+	if page.Cursor != "" {
+		parsed, err := strconv.Atoi(page.Cursor)
+		if err != nil {
+			return nil, nil, err
+		}
+		start = parsed
+	}
+	if start >= len(items) {
+		return nil, &pluginsdk.PageInfo{}, nil
+	}
+	end := start + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	info := &pluginsdk.PageInfo{}
+	if end < len(items) {
+		info.HasMore = true
+		info.NextCursor = strconv.Itoa(end)
+	}
+	return items[start:end], info, nil
 }
 
 type schedulerWorkflowReader struct{ host *schedulerFakeHost }
 
-func (r schedulerWorkflowReader) List(context.Context, string, pluginsdk.Page) ([]pluginsdk.Workflow, *pluginsdk.PageInfo, error) {
-	return r.host.workflows, nil, nil
+func (r schedulerWorkflowReader) List(_ context.Context, workspaceID string, page pluginsdk.Page) ([]pluginsdk.Workflow, *pluginsdk.PageInfo, error) {
+	var workflows []pluginsdk.Workflow
+	for _, workflow := range r.host.workflows {
+		if workflow.WorkspaceID == "" || workflow.WorkspaceID == workspaceID {
+			workflows = append(workflows, workflow)
+		}
+	}
+	return paginateTestItems(workflows, page)
 }
 func (schedulerWorkflowReader) ListSteps(context.Context, string) ([]pluginsdk.WorkflowStep, error) {
 	return nil, nil
@@ -81,10 +116,11 @@ func TestDispatchDueCreatesAndPromptsConfiguredWorkstep(t *testing.T) {
 	require.True(t, host.created[0].StartAgent)
 	require.Equal(t, "step-1", *host.created[0].WorkflowStepID)
 	require.Equal(t, "profile-1", *host.created[0].Launch.AgentProfileID)
-	require.Len(t, host.sent, 1)
-	require.Contains(t, host.sent[0], "base instruction")
-	require.Contains(t, host.sent[0], "workstep instruction")
-	require.Contains(t, host.sent[0], "NON-OVERRIDABLE SAFETY INVARIANTS")
+	require.NotNil(t, host.created[0].Launch.Prompt)
+	require.Contains(t, *host.created[0].Launch.Prompt, "base instruction")
+	require.Contains(t, *host.created[0].Launch.Prompt, "workstep instruction")
+	require.Contains(t, *host.created[0].Launch.Prompt, "NON-OVERRIDABLE SAFETY INVARIANTS")
+	require.Empty(t, host.sent)
 }
 
 func TestDispatchDueCreatesDailyReportOncePerWeekday(t *testing.T) {
@@ -97,9 +133,35 @@ func TestDispatchDueCreatesDailyReportOncePerWeekday(t *testing.T) {
 	require.NoError(t, plugin.dispatchDue(context.Background(), now))
 	require.Len(t, host.created, 2)
 	require.Equal(t, "Coordinator daily report", host.created[1].Title)
-	require.Contains(t, host.sent[1], "coordinator_record_report")
+	require.NotNil(t, host.created[1].Launch.Prompt)
+	require.Contains(t, *host.created[1].Launch.Prompt, "coordinator_record_report")
+	require.Empty(t, host.sent)
 	require.NoError(t, plugin.dispatchDue(context.Background(), now.Add(time.Minute)))
 	require.Len(t, host.created, 2)
+}
+
+func TestDispatchDueFollowsWorkspaceAndWorkflowPagination(t *testing.T) {
+	host := newSchedulerFakeHost()
+	host.config = map[string]any{"agent_profile": "profile-1", "timezone": "America/Montreal", "standup_time": "23:00", "cycle_interval_minutes": float64(45)}
+	host.workspaces = make([]pluginsdk.Workspace, 101)
+	for i := range host.workspaces {
+		host.workspaces[i] = pluginsdk.Workspace{ID: "workspace-ignored"}
+	}
+	host.workspaces[100] = pluginsdk.Workspace{ID: "workspace-2"}
+	host.workflows = make([]pluginsdk.Workflow, 101)
+	for i := range host.workflows {
+		host.workflows[i] = pluginsdk.Workflow{ID: "workflow-ignored", WorkspaceID: "workspace-2"}
+	}
+	host.workflows[100] = pluginsdk.Workflow{ID: "workflow-2", WorkspaceID: "workspace-2"}
+	plugin := &coordinatorPlugin{}
+	plugin.UnimplementedPlugin.SetHost(host)
+	require.NoError(t, plugin.saveWorkflowPolicy(context.Background(), "workspace-2", WorkflowPolicy{WorkflowID: "workflow-2", Worksteps: []WorkstepPolicy{{WorkstepID: "step-2", Prompt: "second page"}}}))
+	require.NoError(t, plugin.dispatchDue(context.Background(), time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC)))
+	require.Len(t, host.created, 1)
+	require.Equal(t, "workspace-2", host.created[0].WorkspaceID)
+	require.Equal(t, "workflow-2", host.created[0].WorkflowID)
+	require.Equal(t, "step-2", *host.created[0].WorkflowStepID)
+	require.Contains(t, *host.created[0].Launch.Prompt, "second page")
 }
 
 func TestDispatchDueSkipsWorkflowWithNoSelectedWorksteps(t *testing.T) {
