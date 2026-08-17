@@ -5,7 +5,7 @@ display_name: "Coordinator"
 description: "Long-lived board orchestration with a native workspace conversation."
 author: "yattdev"
 categories: ["automation", "tools"]
-min_kandev_version: "0.86.0"
+min_kandev_version: "0.88.0"
 runtime:
   type: binary
   executables:

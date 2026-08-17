@@ -72,7 +72,7 @@ jobs:
           make audit-recipes
 
   base-floor:
-    name: Default template on Kandev v0.86.0
+    name: Declared minimum backend on Kandev v0.88.0
     runs-on: ubuntu-latest
     steps:
       - name: Check out plugin
@@ -85,7 +85,7 @@ jobs:
         with:
           repository: kdlbs/kandev
           path: kandev
-          ref: v0.86.0
+          ref: v0.88.0
           sparse-checkout: apps/backend
 
       - name: Set up Go
