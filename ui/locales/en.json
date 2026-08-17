@@ -1,0 +1,16 @@
+{
+  "coordinator.label": "Coordinator",
+  "coordinator.subtitle": "Board orchestration",
+  "coordinator.chat": "Chat",
+  "coordinator.reports": "Reports",
+  "coordinator.settings": "Coordinator settings",
+  "coordinator.refresh": "Refresh reports",
+  "coordinator.runCycle": "Run cycle now",
+  "coordinator.runStandup": "Run standup now",
+  "coordinator.emptyReports": "No coordinator reports yet.",
+  "coordinator.loading": "Loading coordinator…",
+  "coordinator.unavailable": "Coordinator conversations require a compatible Kandev host.",
+  "coordinator.configurationRequired": "Choose a coordinator agent profile in plugin settings.",
+  "coordinator.runQueued": "Coordinator run queued.",
+  "coordinator.failed": "Coordinator request failed."
+}

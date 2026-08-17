@@ -1,0 +1,16 @@
+{
+  "coordinator.label": "[Çööřđîñåţööř]",
+  "coordinator.subtitle": "[ßööåřđ öřçĥéšţřåţîööñ]",
+  "coordinator.chat": "[Çĥåţ]",
+  "coordinator.reports": "[Řéþööřţš]",
+  "coordinator.settings": "[Çööřđîñåţööř šéţţîñĝš]",
+  "coordinator.refresh": "[Řéƒřéšĥ řéþööřţš]",
+  "coordinator.runCycle": "[Řûñ çýçļé ñööŵ]",
+  "coordinator.runStandup": "[Řûñ šţåñđûþ ñööŵ]",
+  "coordinator.emptyReports": "[Ñöö çööřđîñåţööř řéþööřţš ýéţ.]",
+  "coordinator.loading": "[Ļööåđîñĝ çööřđîñåţööř…]",
+  "coordinator.unavailable": "[Çööřđîñåţööř çööñVéřšåţîööñš řéqûîřé å çööɱþåţîƀļé ĶåñđéV ĥööšţ.]",
+  "coordinator.configurationRequired": "[Çĥöööšé å çööřđîñåţööř åĝéñţ þřööƒîļé îñ þļûĝîñ šéţţîñĝš.]",
+  "coordinator.runQueued": "[Çööřđîñåţööř řûñ qûéûéđ.]",
+  "coordinator.failed": "[Çööřđîñåţööř řéqûéšţ ƒåîļéđ.]"
+}
