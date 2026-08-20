@@ -44,7 +44,7 @@ type DispatchResult struct {
 }
 
 func (r DispatchResult) Successful() bool {
-	return r.Status == "sent" || r.Status == "queued" || r.Status == "started" || r.Status == "duplicate_occurrence"
+	return r.Status == "sent" || r.Status == "queued" || r.Status == "started"
 }
 
 type ConversationManager interface {

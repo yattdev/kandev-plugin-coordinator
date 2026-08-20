@@ -2,19 +2,19 @@
 
 ## NEEDS YOUR DECISION
 
-— none
+- none
 
 ## AWAITING YOUR TESTING
 
-— none
+- none
 
 ## WATCH
 
-— none
+- none
 
 ## FYI
 
-— none
+- none
 
 ## BOARD PULSE
 

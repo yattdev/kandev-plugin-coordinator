@@ -45,7 +45,8 @@ func (p *Plugin) runWorkspaceDue(ctx context.Context, workspaceID string, config
 		return err
 	}
 	if standupDue && state.Schedule.LastStandupDate != standupDate {
-		return p.dispatchAndRecord(ctx, workspaceID, config, TriggerStandup, standupKey, now)
+		_, err := p.dispatchAndRecord(ctx, workspaceID, config, TriggerStandup, standupKey, now, true)
+		return err
 	}
 	if !state.Schedule.Armed {
 		return nil
@@ -57,15 +58,16 @@ func (p *Plugin) runWorkspaceDue(ctx context.Context, workspaceID string, config
 	if state.Schedule.LastCycleSlot == cycleKey {
 		return nil
 	}
-	return p.dispatchAndRecord(ctx, workspaceID, config, TriggerCycle, cycleKey, now)
+	_, err = p.dispatchAndRecord(ctx, workspaceID, config, TriggerCycle, cycleKey, now, true)
+	return err
 }
 
 func (p *Plugin) RunManual(ctx context.Context, workspaceID, trigger, idempotencyKey string) (DispatchResult, error) {
 	if trigger != TriggerCycle && trigger != TriggerStandup {
 		return DispatchResult{}, fmt.Errorf("manual trigger must be cycle or standup")
 	}
-	if strings.TrimSpace(idempotencyKey) == "" {
-		return DispatchResult{}, fmt.Errorf("idempotency_key is required")
+	if err := validateManualKey(idempotencyKey); err != nil {
+		return DispatchResult{}, err
 	}
 	config, err := p.config(ctx)
 	if err != nil {
@@ -75,10 +77,20 @@ func (p *Plugin) RunManual(ctx context.Context, workspaceID, trigger, idempotenc
 		return DispatchResult{}, err
 	}
 	key := fmt.Sprintf("manual/%s/%s/%s", workspaceID, trigger, idempotencyKey)
-	return p.dispatchOccurrence(ctx, workspaceID, config, trigger, key)
+	return p.dispatchAndRecord(ctx, workspaceID, config, trigger, key, p.now(), false)
 }
 
-func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, config Config, trigger, occurrenceKey string, now time.Time) error {
+func validateManualKey(idempotencyKey string) error {
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return fmt.Errorf("idempotency_key is required")
+	}
+	if len(idempotencyKey) > 256 {
+		return fmt.Errorf("idempotency_key must not exceed 256 bytes")
+	}
+	return nil
+}
+
+func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, config Config, trigger, occurrenceKey string, now time.Time, scheduled bool) (DispatchResult, error) {
 	result, dispatchErr := p.dispatchOccurrence(ctx, workspaceID, config, trigger, occurrenceKey)
 	statusValue := result.Status
 	if dispatchErr != nil {
@@ -89,13 +101,13 @@ func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, conf
 		if dispatchErr != nil {
 			doc.State.Schedule.LastDispatch.Error = dispatchErr.Error()
 		}
-		if trigger == TriggerStandup {
+		if scheduled && trigger == TriggerStandup {
 			_, date, _, _ := dailyOccurrence(workspaceID, now, config)
 			doc.State.Schedule.LastStandupDate = date
 			if result.Successful() {
 				doc.State.Schedule.Armed = true
 			}
-		} else {
+		} else if scheduled {
 			doc.State.Schedule.LastCycleSlot = occurrenceKey
 		}
 		if result.Successful() {
@@ -115,9 +127,9 @@ func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, conf
 		return nil
 	})
 	if dispatchErr != nil {
-		return errors.Join(dispatchErr, stateErr)
+		return result, errors.Join(dispatchErr, stateErr)
 	}
-	return stateErr
+	return result, stateErr
 }
 
 func (p *Plugin) dispatchOccurrence(ctx context.Context, workspaceID string, config Config, trigger, occurrenceKey string) (DispatchResult, error) {
@@ -174,20 +186,28 @@ func CycleOccurrenceKey(workspaceID string, now time.Time, config Config) (strin
 		return "", false, err
 	}
 	local := now.In(location)
-	start := time.Date(local.Year(), local.Month(), local.Day(), startClock.Hour(), startClock.Minute(), 0, 0, location)
-	end := time.Date(local.Year(), local.Month(), local.Day(), endClock.Hour(), endClock.Minute(), 0, 0, location)
-	if !end.After(start) {
-		if local.Before(end) {
-			start = start.AddDate(0, 0, -1)
-		} else {
-			end = end.AddDate(0, 0, 1)
+	nowMinutes := local.Hour()*60 + local.Minute()
+	startMinutes := startClock.Hour()*60 + startClock.Minute()
+	endMinutes := endClock.Hour()*60 + endClock.Minute()
+	overnight := endMinutes <= startMinutes
+
+	anchor := time.Date(local.Year(), local.Month(), local.Day(), 12, 0, 0, 0, location)
+	offsetMinutes := nowMinutes - startMinutes
+	if overnight {
+		if nowMinutes < endMinutes {
+			anchor = anchor.AddDate(0, 0, -1)
+			offsetMinutes += 24 * 60
+		} else if nowMinutes < startMinutes {
+			return "", false, nil
 		}
-	}
-	if local.Before(start) || !local.Before(end) || !allowedDay(start, config.ScheduleDays) {
+	} else if nowMinutes < startMinutes || nowMinutes >= endMinutes {
 		return "", false, nil
 	}
-	slot := int(local.Sub(start) / (time.Duration(config.CycleIntervalMinutes) * time.Minute))
-	return fmt.Sprintf("scheduled/%s/cycle/%s/%d", workspaceID, start.Format("2006-01-02"), slot), true, nil
+	if !allowedDay(anchor, config.ScheduleDays) {
+		return "", false, nil
+	}
+	slot := offsetMinutes / config.CycleIntervalMinutes
+	return fmt.Sprintf("scheduled/%s/cycle/%s/%d", workspaceID, anchor.Format("2006-01-02"), slot), true, nil
 }
 
 func allowedDay(value time.Time, mode string) bool {

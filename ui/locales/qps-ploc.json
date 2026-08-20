@@ -13,7 +13,9 @@
 	"coordinator.noWorkspace": "[Šéļéçţ å ŵööřķšþåçé ţöö ûšé Çööřđîñåţööř.]",
 	"coordinator.placeholder": "[Méššåĝé ţĥé çööřđîñåţööř…]",
   "coordinator.unavailable": "[Çööřđîñåţööř çööñVéřšåţîööñš řéqûîřé å çööɱþåţîƀļé ĶåñđéV ĥööšţ.]",
-	"coordinator.configurationRequired": "[Çööñƒîĝûřé å ûšåƀļé çööřđîñåţööř ööř ŵööřķšþåçé þřööƒîļé.]",
+  "coordinator.configurationRequired": "[Çööñƒîĝûřé å ûšåƀļé çööřđîñåţööř ööř ŵööřķšþåçé þřööƒîļé.]",
   "coordinator.runQueued": "[Çööřđîñåţööř řûñ qûéûéđ.]",
+  "coordinator.runBusy": "[Çööřđîñåţööř îš ƀûšý. Ţĥîš řûñ ŵåš ñöţ qûéûéđ.]",
+  "coordinator.runDuplicate": "[Ţĥîš çööřđîñåţööř řûñ ŵåš åļřéåđý ĥåñđļéđ.]",
   "coordinator.failed": "[Çööřđîñåţööř řéqûéšţ ƒåîļéđ.]"
 }

@@ -25,6 +25,10 @@ export type ReportArtifact = {
 
 export type ReportPage = { reports: ReportArtifact[]; next_cursor?: string };
 
+export type RunResponse = {
+  dispatch: { status: string; occurrence_key?: string };
+};
+
 export type CoordinatorHost = {
   React: {
     createElement(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): ElementNode;

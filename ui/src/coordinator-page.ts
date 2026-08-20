@@ -67,7 +67,15 @@ export function createCoordinatorPage(host: CoordinatorHost) {
     const run = (trigger: "cycle" | "standup") => {
       setState((current) => ({ ...current, notice: undefined, error: undefined }));
       void client.run(trigger, manualRunKey(trigger)).then(
-        () => setState((current) => ({ ...current, notice: t("coordinator.runQueued") })),
+        (response) => {
+          const status = response.dispatch.status;
+          const notice = status === "skipped_busy"
+            ? t("coordinator.runBusy")
+            : status === "duplicate_occurrence"
+              ? t("coordinator.runDuplicate")
+              : t("coordinator.runQueued");
+          setState((current) => ({ ...current, notice }));
+        },
         (error: unknown) => setState((current) => ({ ...current, error: error instanceof Error ? error.message : t("coordinator.failed") })),
       );
     };

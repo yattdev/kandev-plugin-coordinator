@@ -1,4 +1,4 @@
-import type { CoordinatorHost, EnsureResponse, ReportPage } from "./contracts";
+import type { CoordinatorHost, EnsureResponse, ReportPage, RunResponse } from "./contracts";
 
 export class CoordinatorClient {
   constructor(private readonly host: CoordinatorHost, private readonly workspaceId: string) {}
@@ -14,9 +14,9 @@ export class CoordinatorClient {
     }, { signal });
   }
 
-  run(trigger: "cycle" | "standup", idempotencyKey: string, signal?: AbortSignal): Promise<unknown> {
+  run(trigger: "cycle" | "standup", idempotencyKey: string, signal?: AbortSignal): Promise<RunResponse> {
     const key = trigger === "cycle" ? "coordinator.run-cycle" : "coordinator.run-standup";
-    return this.host.api.invokeAction(key, {
+    return this.host.api.invokeAction<RunResponse>(key, {
       workspaceId: this.workspaceId,
       body: { idempotency_key: idempotencyKey },
     }, { signal });

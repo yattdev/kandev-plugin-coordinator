@@ -13,7 +13,9 @@
 	"coordinator.noWorkspace": "Select a workspace to use Coordinator.",
 	"coordinator.placeholder": "Message the coordinator…",
   "coordinator.unavailable": "Coordinator conversations require a compatible Kandev host.",
-	"coordinator.configurationRequired": "Configure a usable coordinator or workspace default agent profile.",
+  "coordinator.configurationRequired": "Configure a usable coordinator or workspace default agent profile.",
   "coordinator.runQueued": "Coordinator run queued.",
+  "coordinator.runBusy": "Coordinator is busy. This run was not queued.",
+  "coordinator.runDuplicate": "This coordinator run was already handled.",
   "coordinator.failed": "Coordinator request failed."
 }
