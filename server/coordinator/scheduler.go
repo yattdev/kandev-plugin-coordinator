@@ -100,6 +100,17 @@ func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, conf
 		}
 		if result.Successful() {
 			doc.State.Schedule.LastSuccessfulAt = now.UTC().Format(time.RFC3339Nano)
+		} else {
+			body := fmt.Sprintf("Coordinator %s dispatch returned %s.", trigger, statusValue)
+			if dispatchErr != nil {
+				body = fmt.Sprintf("Coordinator %s dispatch failed: %v", trigger, dispatchErr)
+			}
+			doc.Reports = append([]ReportArtifact{{
+				ID: occurrenceKey + "-status", Type: ReportStatus,
+				Title: "Coordinator dispatch status", Body: body,
+				CreatedAt: now.UTC().Format(time.RFC3339Nano), Trigger: trigger,
+				OccurrenceKey: occurrenceKey,
+			}}, doc.Reports...)
 		}
 		return nil
 	})

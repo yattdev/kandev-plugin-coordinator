@@ -2,10 +2,11 @@ id: "kandev-plugin-coordinator"
 api_version: 1
 version: "0.1.0"
 display_name: "Coordinator"
-description: "Long-lived board orchestration with a native workspace conversation."
+description: "Workspace orchestration through a hidden host-managed agent conversation."
 author: "yattdev"
 categories: ["automation", "tools"]
-min_kandev_version: "0.88.0"
+repo_url: "https://github.com/yattdev/kandev-plugin-coordinator"
+
 runtime:
   type: binary
   executables:
@@ -14,42 +15,123 @@ runtime:
     darwin-amd64: "server/plugin-darwin-amd64"
     darwin-arm64: "server/plugin-darwin-arm64"
     windows-amd64: "server/plugin-windows-amd64.exe"
+
 capabilities:
   state: true
-  api_read: [workspaces, workflows]
-  api_write: [tasks, messages]
+  agent_conversation: true
+  api_read: ["workspaces", "workflows"]
+
 actions:
-  - key: "coordinator.status"
-    scope: workspace
+  - key: "coordinator.ensure"
+    scope: "workspace"
     max_body_bytes: 1024
-  - key: "coordinator.report"
-    scope: workspace
-    max_body_bytes: 65536
-  - key: "coordinator.workflow-policy"
-    scope: workspace
-    max_body_bytes: 65536
+  - key: "coordinator.status"
+    scope: "workspace"
+    max_body_bytes: 1024
+  - key: "coordinator.reports"
+    scope: "workspace"
+    max_body_bytes: 4096
+  - key: "coordinator.run-cycle"
+    scope: "workspace"
+    max_body_bytes: 4096
+  - key: "coordinator.run-standup"
+    scope: "workspace"
+    max_body_bytes: 4096
+
 agent_tools:
-  - name: coordinator_status
-    description: "Read coordinator schedule and last persisted report."
-    surfaces: [kanban-task, office-task]
-    input_schema: {type: object, additionalProperties: false}
-    annotations: {read_only_hint: true, idempotent_hint: true}
-  - name: coordinator_record_report
-    description: "Persist the coordinator's completed daily report."
-    surfaces: [kanban-task, office-task]
+  - name: get_coordinator_state
+    description: "Read the bounded coordinator memory for the verified workspace."
+    surfaces: ["kanban-task", "office-task"]
     input_schema:
       type: object
       additionalProperties: false
-      required: [report]
-      properties: {report: {type: string}}
-    annotations: {read_only_hint: false, idempotent_hint: false}
+    annotations:
+      read_only_hint: true
+      destructive_hint: false
+      idempotent_hint: true
+  - name: publish_report
+    description: "Atomically publish a typed report and replace coordinator memory for the verified workspace."
+    surfaces: ["kanban-task", "office-task"]
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: ["type", "title", "body", "state"]
+      properties:
+        type:
+          type: string
+          enum: ["cycle", "daily", "status"]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        body:
+          type: string
+          minLength: 1
+        trigger:
+          type: string
+          enum: ["cycle", "standup"]
+        occurrence_key:
+          type: string
+        state:
+          type: object
+          additionalProperties: false
+          properties:
+            active_flags: {type: array}
+            task_snapshots: {type: object}
+            degradations: {type: array}
+            cycle_log: {type: object}
+    annotations:
+      read_only_hint: false
+      destructive_hint: false
+      idempotent_hint: false
+
 ui:
   bundle: "/ui/bundle.js"
+
 config_schema:
   type: object
+  additionalProperties: false
   properties:
-    agent_profile: {type: string, format: agent-profile, title: "Coordinator agent profile"}
-    base_prompt: {type: string, title: "Default coordinator base prompt", description: "Prepended to every configured workstep check. Safety invariants are always appended."}
-    timezone: {type: string, title: "Timezone", default: "America/Montreal"}
-    standup_time: {type: string, title: "Weekday standup time", default: "07:55"}
-    cycle_interval_minutes: {type: integer, title: "Cycle interval (minutes)", default: 45, minimum: 15, maximum: 240}
+    agent_profile:
+      type: string
+      format: agent-profile
+      title: "Coordinator agent profile"
+      description: "Optional override. When empty, the workspace default agent profile is used."
+    monitoring_enabled:
+      type: boolean
+      title: "Enable scheduled monitoring"
+      default: true
+    cycle_interval_minutes:
+      type: integer
+      title: "Cycle interval (minutes)"
+      default: 45
+      minimum: 5
+      maximum: 1440
+    schedule_days:
+      type: string
+      title: "Schedule days"
+      enum: ["weekdays", "every_day"]
+      default: "weekdays"
+    monitoring_window_start:
+      type: string
+      title: "Monitoring window start"
+      default: "08:00"
+    monitoring_window_end:
+      type: string
+      title: "Monitoring window end"
+      default: "18:00"
+    daily_report_time:
+      type: string
+      title: "Daily standup wake time"
+      default: "07:55"
+    timezone:
+      type: string
+      title: "IANA timezone"
+      default: "America/Montreal"
+    base_prompt:
+      type: string
+      title: "Coordinator base prompt"
+      description: "Prepended to each run. Fixed safety invariants are always appended."
+    report_template:
+      type: string
+      title: "Daily report template"

@@ -1,5 +1,13 @@
 package main
 
-import "github.com/kandev/kandev/pkg/pluginsdk"
+import (
+	"github.com/kandev/kandev/pkg/pluginsdk"
 
-func main() { pluginsdk.Serve(&coordinatorPlugin{}) }
+	"kandev-plugin-coordinator/server/coordinator"
+)
+
+func main() {
+	plugin := coordinator.New()
+	defer plugin.Close()
+	pluginsdk.Serve(plugin)
+}

@@ -51,7 +51,7 @@ func TestPromptCompositionKeepsSafetyInvariantsLast(t *testing.T) {
 func TestOccurrenceKeysAreStable(t *testing.T) {
 	config, err := ConfigFrom(nil)
 	require.NoError(t, err)
-	now := time.Date(2026, 11, 1, 13, 25, 0, 0, time.UTC)
+	now := time.Date(2026, 11, 2, 13, 25, 0, 0, time.UTC)
 	first, ok, err := CycleOccurrenceKey("workspace-1", now, config)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -59,4 +59,10 @@ func TestOccurrenceKeysAreStable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, first, second)
+}
+
+func TestBlankProfileUsesWorkspaceDefault(t *testing.T) {
+	config, err := ConfigFrom(nil)
+	require.NoError(t, err)
+	require.NoError(t, config.ReadyForRun())
 }

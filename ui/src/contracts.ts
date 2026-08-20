@@ -38,12 +38,20 @@ export type CoordinatorHost = {
     Button?: unknown;
     Spinner?: unknown;
   };
-  context?: { workspaceId?: string };
+  context: {
+    getActiveWorkspaceId(): string | undefined;
+    subscribeActiveWorkspace(listener: (workspaceId: string | undefined) => void): () => void;
+  };
   api: {
-    invokeAction<T>(key: string, input?: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<T>;
+    invokeAction<T>(
+      key: string,
+      input?: { workspaceId?: string; body?: unknown },
+      options?: { signal?: AbortSignal },
+    ): Promise<T>;
   };
   i18n: {
     locale: string;
+		t(key: string, options?: { defaultValue?: string }): string;
     useTranslation(): { locale: string; t(key: string, options?: { defaultValue?: string }): string };
   };
   navigate(href: string, options?: { replace?: boolean }): void;
@@ -52,7 +60,11 @@ export type CoordinatorHost = {
 export type CoordinatorRegistry = {
   registerTranslations(catalogs: Record<string, Record<string, string>>): void;
   registerNavItem(item: { id: string; label: string; path: string; icon?: string; section?: string }): void;
-  registerRoute(path: string, component: Component, options?: Record<string, unknown>): void;
+  registerRoute(
+    path: string,
+    component: Component,
+    options?: { topbar?: boolean | { title?: string; subtitle?: string; icon?: string } },
+  ): void;
 };
 
 declare global {

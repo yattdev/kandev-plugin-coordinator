@@ -60,13 +60,14 @@ func (p *Plugin) startRunner() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p.runnerCancel = cancel
-	p.runnerDone = make(chan struct{})
+	done := make(chan struct{})
+	p.runnerDone = done
 	interval := p.tickInterval
 	if interval <= 0 {
 		interval = time.Minute
 	}
 	go func() {
-		defer close(p.runnerDone)
+		defer close(done)
 		_ = p.RunDue(ctx, p.now())
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()

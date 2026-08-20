@@ -16,13 +16,19 @@ export function createCoordinatorPage(host: CoordinatorHost) {
 
   return function CoordinatorPage() {
     const { t } = host.i18n.useTranslation();
-    const workspaceId = host.context?.workspaceId ?? "";
-    const client = React.useMemo(() => new CoordinatorClient(host), [host]);
+    const [workspaceId, setWorkspaceId] = React.useState(host.context.getActiveWorkspaceId() ?? "");
+    const client = React.useMemo(() => new CoordinatorClient(host, workspaceId), [host, workspaceId]);
     const [tab, setTab] = React.useState<"chat" | "reports">("chat");
     const [state, setState] = React.useState<PageState>({ reports: [], loading: true });
 
+    React.useEffect(() => host.context.subscribeActiveWorkspace((next) => setWorkspaceId(next ?? "")), [host]);
+
     React.useEffect(() => {
       const controller = new AbortController();
+		if (!workspaceId) {
+			setState({ reports: [], loading: false, error: t("coordinator.noWorkspace") });
+			return () => controller.abort();
+		}
       setState((current) => ({ ...current, loading: true, error: undefined }));
       Promise.all([client.ensure(controller.signal), client.reports("", controller.signal)])
         .then(([ensure, page]) => {
@@ -34,7 +40,7 @@ export function createCoordinatorPage(host: CoordinatorHost) {
           }
         });
       return () => controller.abort();
-    }, [client, workspaceId]);
+    }, [client, workspaceId, t]);
 
     const refreshReports = () => {
       setState((current) => ({ ...current, loading: true, error: undefined }));
@@ -43,6 +49,20 @@ export function createCoordinatorPage(host: CoordinatorHost) {
         (error: unknown) => setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) })),
       );
     };
+
+		const loadMoreReports = () => {
+			if (!state.nextCursor) return;
+			setState((current) => ({ ...current, loading: true, error: undefined }));
+			void client.reports(state.nextCursor).then(
+				(page) => setState((current) => ({
+					...current,
+					reports: [...current.reports, ...(page.reports ?? [])],
+					nextCursor: page.next_cursor,
+					loading: false,
+				})),
+				(error: unknown) => setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) })),
+			);
+		};
 
     const run = (trigger: "cycle" | "standup") => {
       setState((current) => ({ ...current, notice: undefined, error: undefined }));
@@ -71,10 +91,14 @@ export function createCoordinatorPage(host: CoordinatorHost) {
         h("p", { role: "status" }, t("coordinator.configurationRequired")),
         h(Button, { type: "button", className: "mt-4 min-h-11", onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")),
       );
-    } else if (tab === "chat" && state.ensure?.conversation) {
+    } else if (state.ensure?.status === "error") {
+		content = h("p", { role: "alert", className: "p-6 text-destructive" }, state.ensure.error ?? t("coordinator.failed"));
+	} else if (tab === "chat" && state.ensure?.conversation) {
       content = h(host.ui.WorkspaceAgentChat, {
         workspaceId,
-        conversation: state.ensure.conversation,
+				conversationKey: state.ensure.conversation.key,
+				sessionId: state.ensure.conversation.session_id ?? "",
+				placeholderOverride: t("coordinator.placeholder"),
         className: "min-h-0 flex-1 overflow-hidden",
       });
     } else {
@@ -93,7 +117,10 @@ export function createCoordinatorPage(host: CoordinatorHost) {
       state.error ? h("p", { role: "alert", className: "shrink-0 px-4 py-2 text-destructive" }, state.error) : null,
       state.notice ? h("p", { role: "status", className: "shrink-0 px-4 py-2 text-muted-foreground" }, state.notice) : null,
       h("main", { className: "min-h-0 flex-1 overflow-hidden" }, content),
-      tab === "reports" ? h(Button, { type: "button", className: "min-h-11 shrink-0", onClick: refreshReports }, t("coordinator.refresh")) : null,
+			tab === "reports" ? h("footer", { className: "flex shrink-0 gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]" },
+				h(Button, { type: "button", className: "min-h-11", onClick: refreshReports }, t("coordinator.refresh")),
+				state.nextCursor ? h(Button, { type: "button", className: "min-h-11", onClick: loadMoreReports }, t("coordinator.loadMore")) : null,
+			) : null,
     );
   };
 }

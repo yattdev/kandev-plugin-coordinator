@@ -5,12 +5,15 @@
   "coordinator.reports": "Reports",
   "coordinator.settings": "Coordinator settings",
   "coordinator.refresh": "Refresh reports",
+	"coordinator.loadMore": "Load more reports",
   "coordinator.runCycle": "Run cycle now",
   "coordinator.runStandup": "Run standup now",
   "coordinator.emptyReports": "No coordinator reports yet.",
   "coordinator.loading": "Loading coordinator…",
+	"coordinator.noWorkspace": "Select a workspace to use Coordinator.",
+	"coordinator.placeholder": "Message the coordinator…",
   "coordinator.unavailable": "Coordinator conversations require a compatible Kandev host.",
-  "coordinator.configurationRequired": "Choose a coordinator agent profile in plugin settings.",
+	"coordinator.configurationRequired": "Configure a usable coordinator or workspace default agent profile.",
   "coordinator.runQueued": "Coordinator run queued.",
   "coordinator.failed": "Coordinator request failed."
 }

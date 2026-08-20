@@ -6,11 +6,15 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
+		"build:ui": "esbuild ui/src/index.ts --bundle --format=iife --target=es2022 --outfile=ui/bundle.js",
+		"test:ui": "vitest run ui/src",
+		"typecheck:ui": "tsc --project tsconfig.ui.json --noEmit",
     "test:recipes": "vitest run recipes/source-control/ui",
     "typecheck:recipes": "tsc --project tsconfig.recipes.json --noEmit"
   },
   "devDependencies": {
     "@kandev/plugin-sdk": "file:../kandev/apps/packages/plugin-sdk",
+    "esbuild": "^0.27.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   },

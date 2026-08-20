@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/kandev/kandev/pkg/pluginsdk"
 )
 
 const (
-	ActionEnsure         = "coordinator.ensure"
-	ActionStatus         = "coordinator.status"
-	ActionReports        = "coordinator.reports"
-	ActionRunCycle       = "coordinator.run-cycle"
-	ActionRunStandup     = "coordinator.run-standup"
-	ActionWorkflowPolicy = "coordinator.workflow-policy"
+	ActionEnsure     = "coordinator.ensure"
+	ActionStatus     = "coordinator.status"
+	ActionReports    = "coordinator.reports"
+	ActionRunCycle   = "coordinator.run-cycle"
+	ActionRunStandup = "coordinator.run-standup"
 )
 
 func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {
@@ -31,8 +32,11 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 		if errors.Is(err, ErrConversationCapabilityUnavailable) {
 			return actionJSON(map[string]any{"status": "unavailable", "error": err.Error()})
 		}
-		if err != nil {
+		if errors.Is(err, ErrConversationConfigurationRequired) {
 			return actionJSON(map[string]any{"status": "configuration_required", "error": err.Error()})
+		}
+		if err != nil {
+			return nil, err
 		}
 		return actionJSON(map[string]any{"status": "ready", "conversation": descriptor})
 	case ActionStatus:
@@ -68,8 +72,6 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 			return nil, err
 		}
 		return actionJSON(map[string]any{"dispatch": result})
-	case ActionWorkflowPolicy:
-		return p.handleWorkflowPolicyAction(ctx, workspaceID, req.Body)
 	default:
 		return nil, fmt.Errorf("coordinator: unknown action %q", req.ActionKey)
 	}
@@ -90,32 +92,12 @@ func (p *Plugin) handleStatusAction(ctx context.Context, workspaceID string) (*p
 		status, message = "configuration_required", err.Error()
 	} else if _, err := ensureConversation(ctx, p.manager, workspaceID, config); errors.Is(err, ErrConversationCapabilityUnavailable) {
 		status, message = "unavailable", err.Error()
+	} else if errors.Is(err, ErrConversationConfigurationRequired) {
+		status, message = "configuration_required", err.Error()
 	} else if err != nil {
 		status, message = "error", err.Error()
 	}
 	return actionJSON(map[string]any{"status": status, "message": message, "config": config, "state": state})
-}
-
-func (p *Plugin) handleWorkflowPolicyAction(ctx context.Context, workspaceID string, body []byte) (*pluginsdk.PluginActionResponse, error) {
-	input, err := decodePolicyInput(body)
-	if err != nil {
-		return nil, fmt.Errorf("coordinator: decoding workflow policy: %w", err)
-	}
-	if input.Operation == "get" {
-		policy, found, err := p.loadWorkflowPolicy(ctx, workspaceID, input.WorkflowID)
-		if err != nil {
-			return nil, err
-		}
-		return actionJSON(map[string]any{"configured": found, "policy": policy})
-	}
-	if input.Operation != "save" {
-		return nil, fmt.Errorf("coordinator: workflow policy operation must be get or save")
-	}
-	policy, err := p.saveWorkflowPolicy(ctx, workspaceID, WorkflowPolicy{WorkflowID: input.WorkflowID, Worksteps: input.Worksteps})
-	if err != nil {
-		return nil, err
-	}
-	return actionJSON(map[string]any{"configured": true, "policy": policy})
 }
 
 func actionJSON(value any) (*pluginsdk.PluginActionResponse, error) {

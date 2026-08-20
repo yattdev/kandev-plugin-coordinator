@@ -104,13 +104,7 @@ func (c Config) Validate() error {
 }
 
 func (c Config) ReadyForRun() error {
-	if err := c.Validate(); err != nil {
-		return err
-	}
-	if strings.TrimSpace(c.AgentProfile) == "" {
-		return fmt.Errorf("agent_profile is required")
-	}
-	return nil
+	return c.Validate()
 }
 
 func parseClock(value string) (time.Time, error) { return time.Parse("15:04", value) }
