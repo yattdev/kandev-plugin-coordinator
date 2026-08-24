@@ -19,7 +19,7 @@ runtime:
 capabilities:
   state: true
   agent_conversation: true
-  api_read: ["workspaces", "workflows"]
+  api_read: ["workspaces", "workflows", "task_relations"]
 
 actions:
   - key: "coordinator.ensure"

@@ -12,6 +12,7 @@ import (
 func TestManifestDeclaresManagedConversationContract(t *testing.T) {
 	manifest := readRepositoryFile(t, "manifest.yaml")
 	require.Contains(t, manifest, "agent_conversation: true")
+	require.Contains(t, manifest, "task_relations")
 	require.NotContains(t, manifest, "api_write: [tasks, messages]")
 	require.NotContains(t, manifest, `min_kandev_version: "0.88.0"`)
 	for _, action := range []string{

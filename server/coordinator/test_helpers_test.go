@@ -10,17 +10,20 @@ import (
 
 type fakeHost struct {
 	pluginsdk.UnimplementedHostData
-	mu            sync.Mutex
-	state         map[string]map[string]any
-	config        map[string]any
-	workspaces    []pluginsdk.Workspace
-	workflows     []pluginsdk.Workflow
-	steps         map[string][]pluginsdk.WorkflowStep
-	conversations pluginsdk.AgentConversationManager
+	mu                  sync.Mutex
+	state               map[string]map[string]any
+	config              map[string]any
+	workspaces          []pluginsdk.Workspace
+	workflows           []pluginsdk.Workflow
+	steps               map[string][]pluginsdk.WorkflowStep
+	relations           map[string]*pluginsdk.TaskRelations
+	relationWorkspaceID string
+	relationTaskID      string
+	conversations       pluginsdk.AgentConversationManager
 }
 
 func newFakeHost() *fakeHost {
-	return &fakeHost{state: map[string]map[string]any{}, steps: map[string][]pluginsdk.WorkflowStep{}}
+	return &fakeHost{state: map[string]map[string]any{}, steps: map[string][]pluginsdk.WorkflowStep{}, relations: map[string]*pluginsdk.TaskRelations{}}
 }
 
 func stateMapKey(scope, id, key string) string { return scope + "/" + id + "/" + key }
@@ -61,6 +64,9 @@ func (*fakeHost) EmitEvent(context.Context, string, map[string]any) error { retu
 
 func (h *fakeHost) Workspaces() pluginsdk.WorkspaceReader { return fakeWorkspaceReader{host: h} }
 func (h *fakeHost) Workflows() pluginsdk.WorkflowReader   { return fakeWorkflowReader{host: h} }
+func (h *fakeHost) TaskRelations() pluginsdk.TaskRelationsReader {
+	return fakeTaskRelationsReader{host: h}
+}
 func (h *fakeHost) AgentConversations() pluginsdk.AgentConversationManager {
 	return h.conversations
 }
@@ -72,6 +78,14 @@ func (r fakeWorkspaceReader) List(_ context.Context, page pluginsdk.Page) ([]plu
 }
 
 type fakeWorkflowReader struct{ host *fakeHost }
+
+type fakeTaskRelationsReader struct{ host *fakeHost }
+
+func (r fakeTaskRelationsReader) Get(_ context.Context, workspaceID, taskID string) (*pluginsdk.TaskRelations, error) {
+	r.host.relationWorkspaceID = workspaceID
+	r.host.relationTaskID = taskID
+	return r.host.relations[workspaceID+"/"+taskID], nil
+}
 
 func (r fakeWorkflowReader) List(_ context.Context, workspaceID string, page pluginsdk.Page) ([]pluginsdk.Workflow, *pluginsdk.PageInfo, error) {
 	items := make([]pluginsdk.Workflow, 0, len(r.host.workflows))
