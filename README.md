@@ -9,7 +9,7 @@ Integrations and uses Kandev Automations for wake and event delivery.
 ## Compatibility
 
 Development and CI currently pin Kandev commit
-`ec6fd3632d8680b0e7c0a1b3c802588a26fc0b09`, which provides:
+`7aa216277bb6751c2641f832213294bc5a5c5bf4`, which provides:
 
 - `capabilities.agent_conversation` and `Host.AgentConversations` with
   Ensure/Dispatch/Delete;
