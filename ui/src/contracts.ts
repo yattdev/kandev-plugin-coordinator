@@ -38,6 +38,7 @@ export type CoordinatorState = {
     automations: CapabilityState;
     relations: CapabilityState;
   };
+  automation_bindings: AutomationBinding[];
 };
 
 export type InboxItem = {

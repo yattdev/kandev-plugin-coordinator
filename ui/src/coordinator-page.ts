@@ -49,7 +49,11 @@ export function createCoordinatorPage(host: CoordinatorHost) {
     const Button = host.ui.Button ?? "button";
     const switchTab = (value: Tab, label: string) => h(Button, { type: "button", className: "min-h-11 px-4", "aria-pressed": tab === value, onClick: () => setTab(value) }, label);
     const content = state.loading && !state.status ? h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.loading"))
-      : tab === "overview" ? overviewView(h, state.status, state.automations, (id) => { void client.bindAutomations([id]).then(refresh); }, t)
+      : tab === "overview" ? overviewView(h, state.status, state.automations, (id) => {
+        const current = state.status?.state.automation_bindings ?? [];
+        const ids = [...new Set([...current.map((binding) => binding.automation_id), id])];
+        void client.bindAutomations(ids).then(refresh);
+      }, t)
         : tab === "chat" ? chatView(h, host, state.ensure, workspaceId, t)
           : reportsView(h, state.reports, t("coordinator.emptyReports"));
 
