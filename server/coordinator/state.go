@@ -100,17 +100,27 @@ type CapabilityStates struct {
 	Relations   CapabilityState `json:"relations"`
 }
 
+// AutomationBinding is operator-selected workspace configuration. It stores
+// only a descriptor reference; schedules, event definitions, and secrets stay
+// in Kandev Automations.
+type AutomationBinding struct {
+	AutomationID string `json:"automation_id"`
+	Name         string `json:"name"`
+	BoundAt      string `json:"bound_at"`
+}
+
 type CoordinatorState struct {
-	Identity      CoordinatorIdentity             `json:"identity"`
-	ActiveFlags   []ActiveFlag                    `json:"active_flags"`
-	TaskSnapshots map[string]TaskActivitySnapshot `json:"task_snapshots"`
-	Degradations  []string                        `json:"degradations"`
-	LastReportAt  string                          `json:"last_report_at,omitempty"`
-	CycleLogs     []CycleLog                      `json:"cycle_logs"`
-	Runs          []CoordinatorRun                `json:"runs"`
-	FollowUps     []FollowUp                      `json:"follow_ups"`
-	Inbox         []InboxItem                     `json:"inbox"`
-	Capabilities  CapabilityStates                `json:"capabilities"`
+	Identity           CoordinatorIdentity             `json:"identity"`
+	ActiveFlags        []ActiveFlag                    `json:"active_flags"`
+	TaskSnapshots      map[string]TaskActivitySnapshot `json:"task_snapshots"`
+	Degradations       []string                        `json:"degradations"`
+	LastReportAt       string                          `json:"last_report_at,omitempty"`
+	CycleLogs          []CycleLog                      `json:"cycle_logs"`
+	Runs               []CoordinatorRun                `json:"runs"`
+	FollowUps          []FollowUp                      `json:"follow_ups"`
+	Inbox              []InboxItem                     `json:"inbox"`
+	Capabilities       CapabilityStates                `json:"capabilities"`
+	AutomationBindings []AutomationBinding             `json:"automation_bindings"`
 }
 
 type PublishedState struct {
@@ -256,7 +266,7 @@ func hostCapabilityStates() CapabilityStates {
 	return CapabilityStates{
 		Principal:   CapabilityState{Status: "unavailable", Reason: "This host does not expose a Coordinator principal API."},
 		Inbox:       CapabilityState{Status: "unavailable", Reason: "This host does not expose a Coordinator inbox API."},
-		Automations: CapabilityState{Status: "unavailable", Reason: "Automation setup is managed in Kandev settings and is not exposed to this plugin host."},
+		Automations: CapabilityState{Status: "degraded", Reason: "Automation delivery can use bound IDs; creation and schedule edits remain in Kandev settings."},
 		Relations:   CapabilityState{Status: "available"},
 	}
 }

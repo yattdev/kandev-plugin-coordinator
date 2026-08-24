@@ -19,7 +19,8 @@ runtime:
 capabilities:
   state: true
   agent_conversation: true
-  api_read: ["workspaces", "workflows", "task_relations"]
+  api_read: ["workspaces", "workflows", "task_relations", "automations"]
+  events: ["automation.triggered"]
 
 actions:
   - key: "coordinator.ensure"
@@ -29,6 +30,9 @@ actions:
     scope: "workspace"
     max_body_bytes: 1024
   - key: "coordinator.reports"
+    scope: "workspace"
+    max_body_bytes: 4096
+  - key: "coordinator.automation-bind"
     scope: "workspace"
     max_body_bytes: 4096
 

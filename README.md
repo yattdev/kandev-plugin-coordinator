@@ -35,6 +35,14 @@ plugin starts no ticker, cron, or scheduler. Configure an Automation with the
 Workspace Coordinator, an operator-selected agent/model, a safe workspace scope,
 and a Coordinator prompt/template.
 
+For each workspace, bind the operator-selected Automation IDs through the
+authenticated `coordinator.automation-bind` action. On a server-stamped
+`automation.triggered` delivery, the plugin re-reads that workspace descriptor,
+uses its selected agent profile and prompt with plugin-owned policy, and
+dispatches one idempotent managed-conversation occurrence. Unbound, foreign, or
+disabled Automations do not dispatch work. The binding retains no schedule,
+webhook secret, repository binding, or run history.
+
 The packaged runbook includes templates for board reconciliation, PR/MR fixup,
 and daily standup Automations. Each template documents trigger, Coordinator
 identity, agent/model choice, safe scope, expected output, and human escalation.

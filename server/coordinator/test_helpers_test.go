@@ -16,6 +16,7 @@ type fakeHost struct {
 	workspaces          []pluginsdk.Workspace
 	workflows           []pluginsdk.Workflow
 	steps               map[string][]pluginsdk.WorkflowStep
+	automations         map[string]*pluginsdk.Automation
 	relations           map[string]*pluginsdk.TaskRelations
 	relationWorkspaceID string
 	relationTaskID      string
@@ -23,7 +24,7 @@ type fakeHost struct {
 }
 
 func newFakeHost() *fakeHost {
-	return &fakeHost{state: map[string]map[string]any{}, steps: map[string][]pluginsdk.WorkflowStep{}, relations: map[string]*pluginsdk.TaskRelations{}}
+	return &fakeHost{state: map[string]map[string]any{}, steps: map[string][]pluginsdk.WorkflowStep{}, relations: map[string]*pluginsdk.TaskRelations{}, automations: map[string]*pluginsdk.Automation{}}
 }
 
 func stateMapKey(scope, id, key string) string { return scope + "/" + id + "/" + key }
@@ -67,6 +68,7 @@ func (h *fakeHost) Workflows() pluginsdk.WorkflowReader   { return fakeWorkflowR
 func (h *fakeHost) TaskRelations() pluginsdk.TaskRelationsReader {
 	return fakeTaskRelationsReader{host: h}
 }
+func (h *fakeHost) Automations() pluginsdk.AutomationReader { return fakeAutomationReader{host: h} }
 func (h *fakeHost) AgentConversations() pluginsdk.AgentConversationManager {
 	return h.conversations
 }
@@ -80,6 +82,26 @@ func (r fakeWorkspaceReader) List(_ context.Context, page pluginsdk.Page) ([]plu
 type fakeWorkflowReader struct{ host *fakeHost }
 
 type fakeTaskRelationsReader struct{ host *fakeHost }
+
+type fakeAutomationReader struct{ host *fakeHost }
+
+func (r fakeAutomationReader) List(_ context.Context, workspaceID string, _ pluginsdk.Page) ([]pluginsdk.Automation, *pluginsdk.PageInfo, error) {
+	items := make([]pluginsdk.Automation, 0)
+	for _, automation := range r.host.automations {
+		if automation.WorkspaceID == workspaceID {
+			items = append(items, *automation)
+		}
+	}
+	return items, &pluginsdk.PageInfo{}, nil
+}
+func (r fakeAutomationReader) Get(_ context.Context, workspaceID, id string) (*pluginsdk.Automation, error) {
+	automation := r.host.automations[id]
+	if automation == nil || automation.WorkspaceID != workspaceID {
+		return nil, nil
+	}
+	copy := *automation
+	return &copy, nil
+}
 
 func (r fakeTaskRelationsReader) Get(_ context.Context, workspaceID, taskID string) (*pluginsdk.TaskRelations, error) {
 	r.host.relationWorkspaceID = workspaceID

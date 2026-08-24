@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	ActionEnsure  = "coordinator.ensure"
-	ActionStatus  = "coordinator.status"
-	ActionReports = "coordinator.reports"
+	ActionEnsure         = "coordinator.ensure"
+	ActionStatus         = "coordinator.status"
+	ActionReports        = "coordinator.reports"
+	ActionAutomationBind = "coordinator.automation-bind"
 )
 
 func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {
@@ -54,6 +55,18 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 			return nil, err
 		}
 		return actionJSON(page)
+	case ActionAutomationBind:
+		var input struct {
+			AutomationIDs []string `json:"automation_ids"`
+		}
+		if err := json.Unmarshal(req.Body, &input); err != nil {
+			return nil, fmt.Errorf("coordinator: decoding automation binding request: %w", err)
+		}
+		bindings, err := p.bindAutomations(ctx, workspaceID, input.AutomationIDs)
+		if err != nil {
+			return nil, err
+		}
+		return actionJSON(map[string]any{"bindings": bindings})
 	default:
 		return nil, fmt.Errorf("coordinator: unknown action %q", req.ActionKey)
 	}

@@ -71,6 +71,26 @@ func TestStatusActionExposesTypedUnavailableHostSeams(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body, &body))
 	require.Equal(t, "unavailable", body.Capabilities.Principal.Status)
 	require.Equal(t, "unavailable", body.Capabilities.Inbox.Status)
-	require.Equal(t, "unavailable", body.Capabilities.Automations.Status)
+	require.Equal(t, "degraded", body.Capabilities.Automations.Status)
 	require.Equal(t, "available", body.Capabilities.Relations.Status)
+}
+
+func TestAutomationBindingActionUsesVerifiedWorkspace(t *testing.T) {
+	host := newFakeHost()
+	host.automations["auto-1"] = &pluginsdk.Automation{ID: "auto-1", WorkspaceID: "workspace-verified", Name: "Fixture", Enabled: true}
+	plugin := New()
+	plugin.UnimplementedPlugin.SetHost(host)
+	response, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{
+		ActionKey: ActionAutomationBind, Context: pluginsdk.VerifiedActionContext{WorkspaceID: "workspace-verified"},
+		Body: []byte(`{"workspace_id":"workspace-untrusted","automation_ids":["auto-1"]}`),
+	})
+	require.NoError(t, err)
+	var body struct {
+		Bindings []AutomationBinding `json:"bindings"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body, &body))
+	require.Equal(t, "auto-1", body.Bindings[0].AutomationID)
+	state, err := plugin.readState(context.Background(), "workspace-verified")
+	require.NoError(t, err)
+	require.Len(t, state.AutomationBindings, 1)
 }

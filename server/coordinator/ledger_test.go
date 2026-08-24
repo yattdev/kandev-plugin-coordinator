@@ -55,7 +55,7 @@ func TestCoordinatorCapabilityDegradationIsTypedAndHostBound(t *testing.T) {
 	doc := emptyDocument()
 	require.Equal(t, "unavailable", doc.State.Capabilities.Principal.Status)
 	require.Equal(t, "unavailable", doc.State.Capabilities.Inbox.Status)
-	require.Equal(t, "unavailable", doc.State.Capabilities.Automations.Status)
+	require.Equal(t, "degraded", doc.State.Capabilities.Automations.Status)
 	require.Equal(t, "available", doc.State.Capabilities.Relations.Status)
 	require.NotEmpty(t, doc.State.Capabilities.Principal.Reason)
 }
