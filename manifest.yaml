@@ -19,7 +19,7 @@ runtime:
 capabilities:
   state: true
   agent_conversation: true
-  api_read: ["workspaces", "workflows", "task_relations", "automations"]
+  api_read: ["workspaces", "workflows", "task_relations", "automations", "workspace_agent_principals"]
   events: ["automation.triggered"]
 
 actions:

@@ -17,6 +17,8 @@ type fakeHost struct {
 	workflows           []pluginsdk.Workflow
 	steps               map[string][]pluginsdk.WorkflowStep
 	automations         map[string]*pluginsdk.Automation
+	principal           *pluginsdk.WorkspaceAgentPrincipal
+	principalStatus     *pluginsdk.WorkspaceAgentPrincipalStatus
 	relations           map[string]*pluginsdk.TaskRelations
 	relationWorkspaceID string
 	relationTaskID      string
@@ -69,6 +71,9 @@ func (h *fakeHost) TaskRelations() pluginsdk.TaskRelationsReader {
 	return fakeTaskRelationsReader{host: h}
 }
 func (h *fakeHost) Automations() pluginsdk.AutomationReader { return fakeAutomationReader{host: h} }
+func (h *fakeHost) WorkspaceAgentPrincipals() pluginsdk.WorkspaceAgentPrincipalReader {
+	return fakePrincipalReader{host: h}
+}
 func (h *fakeHost) AgentConversations() pluginsdk.AgentConversationManager {
 	return h.conversations
 }
@@ -84,6 +89,25 @@ type fakeWorkflowReader struct{ host *fakeHost }
 type fakeTaskRelationsReader struct{ host *fakeHost }
 
 type fakeAutomationReader struct{ host *fakeHost }
+type fakePrincipalReader struct{ host *fakeHost }
+
+func (r fakePrincipalReader) Get(_ context.Context, workspaceID, key string) (*pluginsdk.WorkspaceAgentPrincipal, error) {
+	if r.host.principal == nil || r.host.principal.WorkspaceID != workspaceID || r.host.principal.LogicalKey != key {
+		return nil, nil
+	}
+	copy := *r.host.principal
+	return &copy, nil
+}
+func (r fakePrincipalReader) Status(_ context.Context, _ string, _ string) (*pluginsdk.WorkspaceAgentPrincipalStatus, error) {
+	if r.host.principalStatus == nil {
+		return nil, nil
+	}
+	copy := *r.host.principalStatus
+	return &copy, nil
+}
+func (r fakePrincipalReader) ListAudit(context.Context, string, string, pluginsdk.Page) ([]pluginsdk.WorkspaceAgentPrincipalAuditEvent, *pluginsdk.PageInfo, error) {
+	return nil, &pluginsdk.PageInfo{}, nil
+}
 
 func (r fakeAutomationReader) List(_ context.Context, workspaceID string, _ pluginsdk.Page) ([]pluginsdk.Automation, *pluginsdk.PageInfo, error) {
 	items := make([]pluginsdk.Automation, 0)

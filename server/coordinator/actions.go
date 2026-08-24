@@ -90,6 +90,11 @@ func (p *Plugin) handleStatusAction(ctx context.Context, workspaceID string) (*p
 	}
 	status := "ready"
 	message := ""
+	principal, _, principalErr := p.principalStatus(ctx, workspaceID)
+	state.Capabilities.Principal = principal
+	if principalErr != nil {
+		status, message = "unavailable", principal.Reason
+	}
 	if err := config.ReadyForRun(); err != nil {
 		status, message = "configuration_required", err.Error()
 	} else if _, err := ensureConversation(ctx, p.manager, workspaceID, config); errors.Is(err, ErrConversationCapabilityUnavailable) {
