@@ -58,6 +58,17 @@ func (p *Plugin) publishReport(ctx context.Context, workspaceID string, input Pu
 			doc.State.TaskSnapshots = map[string]TaskActivitySnapshot{}
 		}
 		doc.State.Degradations = append([]string(nil), input.State.Degradations...)
+		// Nil means this artifact does not update the durable ledger. A non-nil
+		// empty slice intentionally clears that projection.
+		if input.State.Runs != nil {
+			doc.State.Runs = append([]CoordinatorRun(nil), input.State.Runs...)
+		}
+		if input.State.FollowUps != nil {
+			doc.State.FollowUps = append([]FollowUp(nil), input.State.FollowUps...)
+		}
+		if input.State.Inbox != nil {
+			doc.State.Inbox = append([]InboxItem(nil), input.State.Inbox...)
+		}
 		if input.State.CycleLog != nil {
 			doc.State.CycleLogs = append([]CycleLog{*input.State.CycleLog}, doc.State.CycleLogs...)
 		}
@@ -78,6 +89,9 @@ func validateReportInput(input PublishReportInput) error {
 	if strings.TrimSpace(input.Body) == "" {
 		return fmt.Errorf("report body is required")
 	}
+	if err := validatePublishedState(input.State); err != nil {
+		return err
+	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
 		return err
@@ -86,6 +100,37 @@ func validateReportInput(input PublishReportInput) error {
 		return fmt.Errorf("report payload exceeds %d bytes", maxReportBytes)
 	}
 	return nil
+}
+
+func validatePublishedState(state PublishedState) error {
+	if len(state.Runs) > MaxRuns || len(state.FollowUps) > MaxFollowUps || len(state.Inbox) > MaxInboxItems {
+		return fmt.Errorf("coordinator state exceeds retention limit")
+	}
+	for _, run := range state.Runs {
+		if strings.TrimSpace(run.ID) == "" || strings.TrimSpace(run.StartedAt) == "" || !oneOf(run.Status, "started", "running", "completed", "blocked", "failed", "coalesced") {
+			return fmt.Errorf("invalid coordinator run")
+		}
+	}
+	for _, followUp := range state.FollowUps {
+		if strings.TrimSpace(followUp.ID) == "" || strings.TrimSpace(followUp.Request) == "" || strings.TrimSpace(followUp.ExpectedEvidence) == "" || strings.TrimSpace(followUp.SentAt) == "" || followUp.AttemptCount < 0 || !oneOf(followUp.Status, "pending", "acknowledged", "completed", "stalled", "blocked") {
+			return fmt.Errorf("invalid coordinator follow-up")
+		}
+	}
+	for _, item := range state.Inbox {
+		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Title) == "" || strings.TrimSpace(item.CreatedAt) == "" || !oneOf(item.Kind, "human_decision", "pending_reply", "blocker", "human_qa") || !oneOf(item.Status, "open", "acknowledged", "resolved") {
+			return fmt.Errorf("invalid coordinator inbox item")
+		}
+	}
+	return nil
+}
+
+func oneOf(value string, values ...string) bool {
+	for _, candidate := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Plugin) listReports(ctx context.Context, workspaceID, cursor string, limit int) (ReportPage, error) {

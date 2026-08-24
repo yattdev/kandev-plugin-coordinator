@@ -9,7 +9,7 @@ Integrations and uses Kandev Automations for wake and event delivery.
 ## Compatibility
 
 Development and CI currently pin Kandev commit
-`ff9b8b8ecfd32a7ca00708bbbbff330dc9ccc7a7`, which provides:
+`d911fe4eca60e38cb1f492b79e175ef2ee292291`, which provides:
 
 - `capabilities.agent_conversation` and `Host.AgentConversations` with
   Ensure/Dispatch/Delete;
@@ -18,6 +18,8 @@ Development and CI currently pin Kandev commit
   creation;
 - persisted workflow-step `coordinator_monitored` and `coordinator_prompt`;
 - the host-owned `host.ui.WorkspaceAgentChat` component.
+- `Host.TaskRelations().Get`, a compact, workspace-filtered relation graph with
+  no descriptions, documents, metadata, or repository data.
 
 No released Kandev tag contains that commit yet (`v0.89.0-76-gff9b8b8ec` as
 of 2026-08-20), so the manifest intentionally does not claim an older minimum.
@@ -46,7 +48,10 @@ content.
 ## State, lifecycle, and security
 
 Coordinator memory and typed cycle/daily/status reports are workspace-scoped
-Host state. Reports are newest-first, cursor-paginated, and capped at 200.
+Host state. Its durable identity is the logical `coordinator` key, not the
+replaceable backing task or session. A bounded run ledger, reply follow-up
+ledger, and Inbox projection survive execution replacement. Reports are
+newest-first, cursor-paginated, and capped at 200.
 Cycle logs are capped at 200 and entries older than seven days compact by ISO
 week. Dispatch failures and `skipped_busy` results become status artifacts.
 
@@ -54,6 +59,12 @@ Disable, config restart, and upgrade preserve Coordinator policy and history;
 Automation schedules remain host-owned. Re-enable may repair a replaceable
 execution session without changing the durable Coordinator identity. Uninstall
 cleanup is performed by Kandev using server-stamped provenance.
+
+The initial page opens on Overview/Inbox, exposes the continuous logical Chat
+through the native host component, and keeps Reports available for history.
+When a durable principal, host inbox, or Automation setup API is not supplied,
+Overview renders an explicit typed unavailable state. It never fabricates a
+grant, consumes a backing task as identity, or installs a fallback schedule.
 
 The manifest grants state, managed conversation, and read-only
 workspace/workflow access. Browser actions and agent tools use host-verified

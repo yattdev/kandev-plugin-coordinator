@@ -74,6 +74,9 @@ agent_tools:
             task_snapshots: {type: object}
             degradations: {type: array}
             cycle_log: {type: object}
+            runs: {type: array, maxItems: 100}
+            follow_ups: {type: array, maxItems: 200}
+            inbox: {type: array, maxItems: 200}
     annotations:
       read_only_hint: false
       destructive_hint: false

@@ -56,3 +56,21 @@ func TestActionsRejectMissingVerifiedWorkspace(t *testing.T) {
 	_, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{ActionKey: ActionStatus})
 	require.ErrorContains(t, err, "verified workspace context")
 }
+
+func TestStatusActionExposesTypedUnavailableHostSeams(t *testing.T) {
+	host := newFakeHost()
+	plugin := New()
+	plugin.UnimplementedPlugin.SetHost(host)
+	response, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{
+		ActionKey: ActionStatus, Context: pluginsdk.VerifiedActionContext{WorkspaceID: "workspace-1"},
+	})
+	require.NoError(t, err)
+	var body struct {
+		Capabilities CapabilityStates `json:"capabilities"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body, &body))
+	require.Equal(t, "unavailable", body.Capabilities.Principal.Status)
+	require.Equal(t, "unavailable", body.Capabilities.Inbox.Status)
+	require.Equal(t, "unavailable", body.Capabilities.Automations.Status)
+	require.Equal(t, "available", body.Capabilities.Relations.Status)
+}

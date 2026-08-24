@@ -79,7 +79,7 @@ func (p *Plugin) handleStatusAction(ctx context.Context, workspaceID string) (*p
 	} else if err != nil {
 		status, message = "error", err.Error()
 	}
-	return actionJSON(map[string]any{"status": status, "message": message, "config": config, "state": state})
+	return actionJSON(map[string]any{"status": status, "message": message, "config": config, "state": state, "capabilities": state.Capabilities})
 }
 
 func actionJSON(value any) (*pluginsdk.PluginActionResponse, error) {

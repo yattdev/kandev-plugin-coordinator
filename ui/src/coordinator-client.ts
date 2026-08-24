@@ -1,4 +1,4 @@
-import type { CoordinatorHost, EnsureResponse, ReportPage } from "./contracts";
+import type { CoordinatorHost, EnsureResponse, ReportPage, StatusResponse } from "./contracts";
 
 export class CoordinatorClient {
   constructor(private readonly host: CoordinatorHost, private readonly workspaceId: string) {}
@@ -12,6 +12,10 @@ export class CoordinatorClient {
       workspaceId: this.workspaceId,
       body: { cursor, limit: 20 },
     }, { signal });
+  }
+
+  status(signal?: AbortSignal): Promise<StatusResponse> {
+    return this.host.api.invokeAction<StatusResponse>("coordinator.status", { workspaceId: this.workspaceId }, { signal });
   }
 
 }

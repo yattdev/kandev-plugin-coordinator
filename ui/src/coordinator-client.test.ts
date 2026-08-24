@@ -9,10 +9,12 @@ describe("CoordinatorClient", () => {
 
     await client.ensure();
     await client.reports("cursor-1");
+		await client.status();
 
 		expect(invokeAction.mock.calls).toEqual([
 			["coordinator.ensure", { workspaceId: "workspace-1" }, { signal: undefined }],
 			["coordinator.reports", { workspaceId: "workspace-1", body: { cursor: "cursor-1", limit: 20 } }, { signal: undefined }],
+			["coordinator.status", { workspaceId: "workspace-1" }, { signal: undefined }],
 		]);
   });
 });
