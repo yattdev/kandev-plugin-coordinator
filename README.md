@@ -9,7 +9,7 @@ Integrations and uses Kandev Automations for wake and event delivery.
 ## Compatibility
 
 Development and CI currently pin Kandev commit
-`d911fe4eca60e38cb1f492b79e175ef2ee292291`, which provides:
+`30279d79d5aac8e8a340cd452327c0c42a60a02d`, which provides:
 
 - `capabilities.agent_conversation` and `Host.AgentConversations` with
   Ensure/Dispatch/Delete;
@@ -20,6 +20,8 @@ Development and CI currently pin Kandev commit
 - the host-owned `host.ui.WorkspaceAgentChat` component.
 - `Host.TaskRelations().Get`, a compact, workspace-filtered relation graph with
   no descriptions, documents, metadata, or repository data.
+- safe workspace Automation descriptors and server-stamped Automation delivery;
+- opaque Workspace Coordinator principal Descriptor/Status/Audit projections.
 
 No released Kandev tag contains that commit yet (`v0.89.0-76-gff9b8b8ec` as
 of 2026-08-20), so the manifest intentionally does not claim an older minimum.
