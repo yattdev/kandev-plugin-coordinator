@@ -1,4 +1,4 @@
-import { CoordinatorClient, manualRunKey } from "./coordinator-client";
+import { CoordinatorClient } from "./coordinator-client";
 import type { CoordinatorHost, EnsureResponse, ReportArtifact } from "./contracts";
 
 type PageState = {
@@ -64,22 +64,6 @@ export function createCoordinatorPage(host: CoordinatorHost) {
 			);
 		};
 
-    const run = (trigger: "cycle" | "standup") => {
-      setState((current) => ({ ...current, notice: undefined, error: undefined }));
-      void client.run(trigger, manualRunKey(trigger)).then(
-        (response) => {
-          const status = response.dispatch.status;
-          const notice = status === "skipped_busy"
-            ? t("coordinator.runBusy")
-            : status === "duplicate_occurrence"
-              ? t("coordinator.runDuplicate")
-              : t("coordinator.runQueued");
-          setState((current) => ({ ...current, notice }));
-        },
-        (error: unknown) => setState((current) => ({ ...current, error: error instanceof Error ? error.message : t("coordinator.failed") })),
-      );
-    };
-
     const Button = host.ui.Button ?? "button";
     const tabButton = (value: "chat" | "reports", label: string) =>
       h(Button, {
@@ -116,11 +100,7 @@ export function createCoordinatorPage(host: CoordinatorHost) {
     return h("div", { className: "flex h-full min-h-0 max-w-full flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]" },
       h("header", { className: "flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-2" },
         h("div", { role: "tablist", className: "flex items-center gap-1" }, tabButton("chat", t("coordinator.chat")), tabButton("reports", t("coordinator.reports"))),
-        h("div", { className: "flex flex-wrap items-center gap-2" },
-          h(Button, { type: "button", className: "min-h-11", onClick: () => run("cycle") }, t("coordinator.runCycle")),
-          h(Button, { type: "button", className: "min-h-11", onClick: () => run("standup") }, t("coordinator.runStandup")),
-          h(Button, { type: "button", className: "min-h-11", onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")),
-        ),
+        h(Button, { type: "button", className: "min-h-11", onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")),
       ),
       state.error ? h("p", { role: "alert", className: "shrink-0 px-4 py-2 text-destructive" }, state.error) : null,
       state.notice ? h("p", { role: "status", className: "shrink-0 px-4 py-2 text-muted-foreground" }, state.notice) : null,

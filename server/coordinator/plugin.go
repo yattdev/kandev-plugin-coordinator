@@ -3,7 +3,6 @@ package coordinator
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
@@ -15,11 +14,7 @@ type Plugin struct {
 	manager         ConversationManager
 	managerInjected bool
 	nowFn           func() time.Time
-	tickInterval    time.Duration
 	locks           workspaceLocks
-	runnerMu        sync.Mutex
-	runnerCancel    context.CancelFunc
-	runnerDone      chan struct{}
 }
 
 var (
@@ -28,7 +23,7 @@ var (
 	_ pluginsdk.AgentToolPlugin = (*Plugin)(nil)
 )
 
-func New() *Plugin { return &Plugin{nowFn: time.Now, tickInterval: time.Minute} }
+func New() *Plugin { return &Plugin{nowFn: time.Now} }
 
 func NewWithConversationManager(manager ConversationManager) *Plugin {
 	p := New()
@@ -48,50 +43,6 @@ func (p *Plugin) SetHost(host pluginsdk.Host) {
 	p.UnimplementedPlugin.SetHost(host)
 	if !p.managerInjected {
 		p.manager = newHostConversationManager(host)
-	}
-	p.startRunner()
-}
-
-func (p *Plugin) startRunner() {
-	p.runnerMu.Lock()
-	defer p.runnerMu.Unlock()
-	if p.runnerCancel != nil {
-		return
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	p.runnerCancel = cancel
-	done := make(chan struct{})
-	p.runnerDone = done
-	interval := p.tickInterval
-	if interval <= 0 {
-		interval = time.Minute
-	}
-	go func() {
-		defer close(done)
-		_ = p.RunDue(ctx, p.now())
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_ = p.RunDue(ctx, p.now())
-			}
-		}
-	}()
-}
-
-func (p *Plugin) Close() {
-	p.runnerMu.Lock()
-	cancel, done := p.runnerCancel, p.runnerDone
-	p.runnerCancel, p.runnerDone = nil, nil
-	p.runnerMu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	if done != nil {
-		<-done
 	}
 }
 

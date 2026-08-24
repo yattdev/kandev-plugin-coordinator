@@ -1,10 +1,10 @@
 # kandev-plugin-coordinator
 
 A native Kandev plugin for a permanent, workspace-scoped supervising agent.
-It adds one localized **Coordinator** destination under **Integrations** and a
-full-height `/coordinator` route with native chat, typed reports, manual run
-controls, and a direct settings link. The backing task/session is host-managed,
-workflowless, ephemeral, and hidden from Kanban and task lists.
+It is a Stage-0 compatibility slice for a durable, workspace-level Coordinator.
+The current hidden conversation is replaceable transport only, never Coordinator
+identity or authority. The final product places Coordinator immediately after
+Integrations and uses Kandev Automations for wake and event delivery.
 
 ## Compatibility
 
@@ -25,18 +25,17 @@ Set `min_kandev_version` to the first containing release before publishing this
 plugin. Older hosts show an explicit compatibility state; there is no visible
 task fallback.
 
-## Configuration and scheduling
+## Configuration and Automations
 
 Installation settings own the optional agent-profile override, editable base
-prompt, report template, timezone, day mode, cadence, and window. A blank
-profile override uses each workspace's effective default. Invalid, disabled,
-or missing effective profiles return `configuration_required` without creating
-a partial conversation.
+prompt, and report template. Kandev Automations owns schedules and events; this
+plugin starts no ticker, cron, or scheduler. Configure an Automation with the
+Workspace Coordinator, an operator-selected agent/model, a safe workspace scope,
+and a Coordinator prompt/template.
 
-Defaults are weekdays, America/Montreal, daily standup at 07:55, and monitoring
-every 45 minutes from 08:00 through 18:00. Monitoring cycles arm only after the
-first successful daily dispatch. Manual cycle and standup actions work before
-arming and use caller-specific idempotency keys.
+The packaged runbook includes templates for board reconciliation, PR/MR fixup,
+and daily standup Automations. Each template documents trigger, Coordinator
+identity, agent/model choice, safe scope, expected output, and human escalation.
 
 Workflow settings are the only monitoring-policy source. The plugin reads the
 host-owned monitored flag and optional multiline prompt on each workflow step;
@@ -51,10 +50,10 @@ Host state. Reports are newest-first, cursor-paginated, and capped at 200.
 Cycle logs are capped at 200 and entries older than seven days compact by ISO
 week. Dispatch failures and `skipped_busy` results become status artifacts.
 
-Disable, config restart, and upgrade stop the cancellable scheduler while
-preserving conversation and state. Re-enable repairs/reuses the same stable
-`coordinator` conversation. Uninstall cleanup is performed by Kandev using
-server-stamped plugin provenance.
+Disable, config restart, and upgrade preserve Coordinator policy and history;
+Automation schedules remain host-owned. Re-enable may repair a replaceable
+execution session without changing the durable Coordinator identity. Uninstall
+cleanup is performed by Kandev using server-stamped provenance.
 
 The manifest grants state, managed conversation, and read-only
 workspace/workflow access. Browser actions and agent tools use host-verified

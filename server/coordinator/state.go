@@ -38,29 +38,12 @@ type CycleLog struct {
 	Summary string `json:"summary"`
 }
 
-type DispatchStatus struct {
-	Trigger       string `json:"trigger,omitempty"`
-	OccurrenceKey string `json:"occurrence_key,omitempty"`
-	Status        string `json:"status,omitempty"`
-	At            string `json:"at,omitempty"`
-	Error         string `json:"error,omitempty"`
-}
-
-type ScheduleState struct {
-	Armed            bool           `json:"armed"`
-	LastStandupDate  string         `json:"last_standup_date,omitempty"`
-	LastCycleSlot    string         `json:"last_cycle_slot,omitempty"`
-	LastSuccessfulAt string         `json:"last_successful_at,omitempty"`
-	LastDispatch     DispatchStatus `json:"last_dispatch"`
-}
-
 type CoordinatorState struct {
 	ActiveFlags   []ActiveFlag                    `json:"active_flags"`
 	TaskSnapshots map[string]TaskActivitySnapshot `json:"task_snapshots"`
 	Degradations  []string                        `json:"degradations"`
 	LastReportAt  string                          `json:"last_report_at,omitempty"`
 	CycleLogs     []CycleLog                      `json:"cycle_logs"`
-	Schedule      ScheduleState                   `json:"schedule"`
 }
 
 type PublishedState struct {

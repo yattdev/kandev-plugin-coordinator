@@ -16,7 +16,6 @@ func TestManifestDeclaresManagedConversationContract(t *testing.T) {
 	require.NotContains(t, manifest, `min_kandev_version: "0.88.0"`)
 	for _, action := range []string{
 		"coordinator.ensure", "coordinator.status", "coordinator.reports",
-		"coordinator.run-cycle", "coordinator.run-standup",
 	} {
 		require.Contains(t, manifest, action)
 	}
@@ -33,7 +32,7 @@ func TestUIBindsCurrentHostContract(t *testing.T) {
 	require.Contains(t, page, "sessionId: state.ensure.conversation.session_id")
 	require.NotContains(t, page, "conversation: state.ensure.conversation")
 	require.Contains(t, client, "workspaceId: this.workspaceId")
-	require.Contains(t, client, "body: { idempotency_key: idempotencyKey }")
+	require.NotContains(t, client, "idempotency_key")
 }
 
 func TestPromptAssetsAreAdaptedAndSelfContained(t *testing.T) {

@@ -10,11 +10,9 @@ import (
 )
 
 const (
-	ActionEnsure     = "coordinator.ensure"
-	ActionStatus     = "coordinator.status"
-	ActionReports    = "coordinator.reports"
-	ActionRunCycle   = "coordinator.run-cycle"
-	ActionRunStandup = "coordinator.run-standup"
+	ActionEnsure  = "coordinator.ensure"
+	ActionStatus  = "coordinator.status"
+	ActionReports = "coordinator.reports"
 )
 
 func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {
@@ -56,22 +54,6 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 			return nil, err
 		}
 		return actionJSON(page)
-	case ActionRunCycle, ActionRunStandup:
-		var input struct {
-			IdempotencyKey string `json:"idempotency_key"`
-		}
-		if err := json.Unmarshal(req.Body, &input); err != nil {
-			return nil, fmt.Errorf("coordinator: decoding manual run: %w", err)
-		}
-		trigger := TriggerCycle
-		if req.ActionKey == ActionRunStandup {
-			trigger = TriggerStandup
-		}
-		result, err := p.RunManual(ctx, workspaceID, trigger, input.IdempotencyKey)
-		if err != nil {
-			return nil, err
-		}
-		return actionJSON(map[string]any{"dispatch": result})
 	default:
 		return nil, fmt.Errorf("coordinator: unknown action %q", req.ActionKey)
 	}
