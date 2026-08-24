@@ -14,6 +14,7 @@ const (
 	ActionStatus         = "coordinator.status"
 	ActionReports        = "coordinator.reports"
 	ActionAutomationBind = "coordinator.automation-bind"
+	ActionAutomations    = "coordinator.automations"
 )
 
 func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {
@@ -67,6 +68,12 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 			return nil, err
 		}
 		return actionJSON(map[string]any{"bindings": bindings})
+	case ActionAutomations:
+		items, err := p.listAllAutomations(ctx, workspaceID)
+		if err != nil {
+			return nil, err
+		}
+		return actionJSON(map[string]any{"automations": items})
 	default:
 		return nil, fmt.Errorf("coordinator: unknown action %q", req.ActionKey)
 	}

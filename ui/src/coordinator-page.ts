@@ -1,8 +1,8 @@
 import { CoordinatorClient } from "./coordinator-client";
-import type { CapabilityState, CoordinatorHost, EnsureResponse, InboxItem, ReportArtifact, StatusResponse } from "./contracts";
+import type { AutomationDescriptor, CapabilityState, CoordinatorHost, EnsureResponse, InboxItem, ReportArtifact, StatusResponse } from "./contracts";
 
 type Tab = "overview" | "chat" | "reports";
-type PageState = { ensure?: EnsureResponse; status?: StatusResponse; reports: ReportArtifact[]; nextCursor?: string; loading: boolean; error?: string };
+type PageState = { ensure?: EnsureResponse; status?: StatusResponse; automations: AutomationDescriptor[]; reports: ReportArtifact[]; nextCursor?: string; loading: boolean; error?: string };
 
 export function createCoordinatorPage(host: CoordinatorHost) {
   const React = host.React;
@@ -12,18 +12,18 @@ export function createCoordinatorPage(host: CoordinatorHost) {
     const [workspaceId, setWorkspaceId] = React.useState(host.context.getActiveWorkspaceId() ?? "");
     const client = React.useMemo(() => new CoordinatorClient(host, workspaceId), [host, workspaceId]);
     const [tab, setTab] = React.useState<Tab>("overview");
-    const [state, setState] = React.useState<PageState>({ reports: [], loading: true });
+    const [state, setState] = React.useState<PageState>({ automations: [], reports: [], loading: true });
 
     React.useEffect(() => host.context.subscribeActiveWorkspace((next) => setWorkspaceId(next ?? "")), [host]);
     React.useEffect(() => {
       const controller = new AbortController();
       if (!workspaceId) {
-        setState({ reports: [], loading: false, error: t("coordinator.noWorkspace") });
+        setState({ automations: [], reports: [], loading: false, error: t("coordinator.noWorkspace") });
         return () => controller.abort();
       }
       setState((current) => ({ ...current, loading: true, error: undefined }));
-      Promise.all([client.ensure(controller.signal), client.status(controller.signal), client.reports("", controller.signal)])
-        .then(([ensure, status, page]) => setState({ ensure, status, reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false }))
+      Promise.all([client.ensure(controller.signal), client.status(controller.signal), client.automations(controller.signal), client.reports("", controller.signal)])
+        .then(([ensure, status, automations, page]) => setState({ ensure, status, automations: automations.automations ?? [], reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false }))
         .catch((error: unknown) => {
           if (!controller.signal.aborted) setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) }));
         });
@@ -32,8 +32,8 @@ export function createCoordinatorPage(host: CoordinatorHost) {
 
     const refresh = () => {
       setState((current) => ({ ...current, loading: true, error: undefined }));
-      void Promise.all([client.status(), client.reports()]).then(
-        ([status, page]) => setState((current) => ({ ...current, status, reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false })),
+      void Promise.all([client.status(), client.automations(), client.reports()]).then(
+        ([status, automations, page]) => setState((current) => ({ ...current, status, automations: automations.automations ?? [], reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false })),
         (error: unknown) => setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) })),
       );
     };
@@ -49,7 +49,7 @@ export function createCoordinatorPage(host: CoordinatorHost) {
     const Button = host.ui.Button ?? "button";
     const switchTab = (value: Tab, label: string) => h(Button, { type: "button", className: "min-h-11 px-4", "aria-pressed": tab === value, onClick: () => setTab(value) }, label);
     const content = state.loading && !state.status ? h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.loading"))
-      : tab === "overview" ? overviewView(h, state.status, t)
+      : tab === "overview" ? overviewView(h, state.status, state.automations, (id) => { void client.bindAutomations([id]).then(refresh); }, t)
         : tab === "chat" ? chatView(h, host, state.ensure, workspaceId, t)
           : reportsView(h, state.reports, t("coordinator.emptyReports"));
 
@@ -70,7 +70,7 @@ export function createCoordinatorPage(host: CoordinatorHost) {
   };
 }
 
-function overviewView(h: CoordinatorHost["React"]["createElement"], status: StatusResponse | undefined, t: (key: string) => string): unknown {
+function overviewView(h: CoordinatorHost["React"]["createElement"], status: StatusResponse | undefined, automations: AutomationDescriptor[], bind: (id: string) => void, t: (key: string) => string): unknown {
   const state = status?.state;
   const inbox = state?.inbox ?? [];
   const followUps = state?.follow_ups ?? [];
@@ -80,7 +80,12 @@ function overviewView(h: CoordinatorHost["React"]["createElement"], status: Stat
     h("h2", { className: "mt-6 font-medium" }, t("coordinator.inbox")),
     inbox.length === 0 ? h("p", { className: "mt-2 text-sm text-muted-foreground" }, t("coordinator.emptyInbox")) : h("ol", { className: "mt-2 space-y-2" }, ...inbox.map((item) => inboxRow(h, item))),
     h("h2", { className: "mt-6 font-medium" }, t("coordinator.hostCapabilities")), h("ul", { className: "mt-2 space-y-2" }, ...capabilityRows(h, state?.capabilities, t)),
+    h("h2", { className: "mt-6 font-medium" }, t("coordinator.automationBindings")),
+    automations.length === 0 ? h("p", { className: "mt-2 text-sm text-muted-foreground" }, t("coordinator.noAutomations")) : h("ul", { className: "mt-2 space-y-2" }, ...automations.map((automation) => automationRow(h, automation, bind, t))),
   );
+}
+function automationRow(h: CoordinatorHost["React"]["createElement"], automation: AutomationDescriptor, bind: (id: string) => void, t: (key: string) => string): unknown {
+  return h("li", { key: automation.id, className: "flex flex-wrap items-center justify-between gap-2 rounded-md border p-3" }, h("div", null, h("strong", null, automation.name), h("p", { className: "text-sm text-muted-foreground" }, automation.enabled ? t("coordinator.enabled") : t("coordinator.disabled"))), h("button", { type: "button", className: "min-h-11 rounded border px-3", disabled: !automation.enabled, onClick: () => bind(automation.id) }, t("coordinator.bindAutomation")));
 }
 
 function summaryCard(h: CoordinatorHost["React"]["createElement"], label: string, value: string): unknown {

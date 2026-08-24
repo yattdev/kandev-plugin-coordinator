@@ -71,6 +71,18 @@ export type StatusResponse = {
   capabilities: CoordinatorState["capabilities"];
 };
 
+export type AutomationDescriptor = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string;
+  agent_profile_id?: string;
+  enabled: boolean;
+};
+
+export type AutomationPage = { automations: AutomationDescriptor[] };
+export type AutomationBinding = { automation_id: string; name: string; bound_at: string };
+
 export type CoordinatorHost = {
   React: {
     createElement(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): ElementNode;

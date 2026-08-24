@@ -18,7 +18,7 @@ func TestManifestDeclaresManagedConversationContract(t *testing.T) {
 	require.NotContains(t, manifest, "api_write: [tasks, messages]")
 	require.NotContains(t, manifest, `min_kandev_version: "0.88.0"`)
 	for _, action := range []string{
-		"coordinator.ensure", "coordinator.status", "coordinator.reports", "coordinator.automation-bind",
+		"coordinator.ensure", "coordinator.status", "coordinator.reports", "coordinator.automation-bind", "coordinator.automations",
 	} {
 		require.Contains(t, manifest, action)
 	}

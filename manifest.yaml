@@ -35,6 +35,9 @@ actions:
   - key: "coordinator.automation-bind"
     scope: "workspace"
     max_body_bytes: 4096
+  - key: "coordinator.automations"
+    scope: "workspace"
+    max_body_bytes: 1024
 
 agent_tools:
   - name: get_coordinator_state

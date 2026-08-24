@@ -98,6 +98,25 @@ func (p *Plugin) bindAutomations(ctx context.Context, workspaceID string, ids []
 	return bindings, err
 }
 
+func (p *Plugin) listAllAutomations(ctx context.Context, workspaceID string) ([]pluginsdk.Automation, error) {
+	page := pluginsdk.Page{Limit: 100}
+	var all []pluginsdk.Automation
+	for {
+		items, info, err := p.Host().Automations().List(ctx, workspaceID, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+		if info == nil || !info.HasMore {
+			return all, nil
+		}
+		if info.NextCursor == "" {
+			return nil, fmt.Errorf("automation pagination returned has_more without next cursor")
+		}
+		page.Cursor = info.NextCursor
+	}
+}
+
 func (p *Plugin) findAutomationBinding(ctx context.Context, workspaceID, id string) (AutomationBinding, bool, error) {
 	state, err := p.readState(ctx, workspaceID)
 	if err != nil {

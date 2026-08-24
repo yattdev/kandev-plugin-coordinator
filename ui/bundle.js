@@ -17,6 +17,12 @@
     status(signal) {
       return this.host.api.invokeAction("coordinator.status", { workspaceId: this.workspaceId }, { signal });
     }
+    automations(signal) {
+      return this.host.api.invokeAction("coordinator.automations", { workspaceId: this.workspaceId }, { signal });
+    }
+    bindAutomations(automationIds, signal) {
+      return this.host.api.invokeAction("coordinator.automation-bind", { workspaceId: this.workspaceId, body: { automation_ids: automationIds } }, { signal });
+    }
   };
 
   // ui/src/coordinator-page.ts
@@ -28,24 +34,24 @@
       const [workspaceId, setWorkspaceId] = React.useState(host.context.getActiveWorkspaceId() ?? "");
       const client = React.useMemo(() => new CoordinatorClient(host, workspaceId), [host, workspaceId]);
       const [tab, setTab] = React.useState("overview");
-      const [state, setState] = React.useState({ reports: [], loading: true });
+      const [state, setState] = React.useState({ automations: [], reports: [], loading: true });
       React.useEffect(() => host.context.subscribeActiveWorkspace((next) => setWorkspaceId(next ?? "")), [host]);
       React.useEffect(() => {
         const controller = new AbortController();
         if (!workspaceId) {
-          setState({ reports: [], loading: false, error: t("coordinator.noWorkspace") });
+          setState({ automations: [], reports: [], loading: false, error: t("coordinator.noWorkspace") });
           return () => controller.abort();
         }
         setState((current) => ({ ...current, loading: true, error: void 0 }));
-        Promise.all([client.ensure(controller.signal), client.status(controller.signal), client.reports("", controller.signal)]).then(([ensure, status, page]) => setState({ ensure, status, reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false })).catch((error) => {
+        Promise.all([client.ensure(controller.signal), client.status(controller.signal), client.automations(controller.signal), client.reports("", controller.signal)]).then(([ensure, status, automations, page]) => setState({ ensure, status, automations: automations.automations ?? [], reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false })).catch((error) => {
           if (!controller.signal.aborted) setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) }));
         });
         return () => controller.abort();
       }, [client, workspaceId, t]);
       const refresh = () => {
         setState((current) => ({ ...current, loading: true, error: void 0 }));
-        void Promise.all([client.status(), client.reports()]).then(
-          ([status, page]) => setState((current) => ({ ...current, status, reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false })),
+        void Promise.all([client.status(), client.automations(), client.reports()]).then(
+          ([status, automations, page]) => setState((current) => ({ ...current, status, automations: automations.automations ?? [], reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false })),
           (error) => setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) }))
         );
       };
@@ -59,7 +65,9 @@
       };
       const Button = host.ui.Button ?? "button";
       const switchTab = (value, label) => h(Button, { type: "button", className: "min-h-11 px-4", "aria-pressed": tab === value, onClick: () => setTab(value) }, label);
-      const content = state.loading && !state.status ? h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.loading")) : tab === "overview" ? overviewView(h, state.status, t) : tab === "chat" ? chatView(h, host, state.ensure, workspaceId, t) : reportsView(h, state.reports, t("coordinator.emptyReports"));
+      const content = state.loading && !state.status ? h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.loading")) : tab === "overview" ? overviewView(h, state.status, state.automations, (id) => {
+        void client.bindAutomations([id]).then(refresh);
+      }, t) : tab === "chat" ? chatView(h, host, state.ensure, workspaceId, t) : reportsView(h, state.reports, t("coordinator.emptyReports"));
       return h(
         "div",
         { className: "flex h-full min-h-0 max-w-full flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]" },
@@ -86,7 +94,7 @@
       );
     };
   }
-  function overviewView(h, status, t) {
+  function overviewView(h, status, automations, bind, t) {
     const state = status?.state;
     const inbox = state?.inbox ?? [];
     const followUps = state?.follow_ups ?? [];
@@ -99,8 +107,13 @@
       h("h2", { className: "mt-6 font-medium" }, t("coordinator.inbox")),
       inbox.length === 0 ? h("p", { className: "mt-2 text-sm text-muted-foreground" }, t("coordinator.emptyInbox")) : h("ol", { className: "mt-2 space-y-2" }, ...inbox.map((item) => inboxRow(h, item))),
       h("h2", { className: "mt-6 font-medium" }, t("coordinator.hostCapabilities")),
-      h("ul", { className: "mt-2 space-y-2" }, ...capabilityRows(h, state?.capabilities, t))
+      h("ul", { className: "mt-2 space-y-2" }, ...capabilityRows(h, state?.capabilities, t)),
+      h("h2", { className: "mt-6 font-medium" }, t("coordinator.automationBindings")),
+      automations.length === 0 ? h("p", { className: "mt-2 text-sm text-muted-foreground" }, t("coordinator.noAutomations")) : h("ul", { className: "mt-2 space-y-2" }, ...automations.map((automation) => automationRow(h, automation, bind, t)))
     );
+  }
+  function automationRow(h, automation, bind, t) {
+    return h("li", { key: automation.id, className: "flex flex-wrap items-center justify-between gap-2 rounded-md border p-3" }, h("div", null, h("strong", null, automation.name), h("p", { className: "text-sm text-muted-foreground" }, automation.enabled ? t("coordinator.enabled") : t("coordinator.disabled"))), h("button", { type: "button", className: "min-h-11 rounded border px-3", disabled: !automation.enabled, onClick: () => bind(automation.id) }, t("coordinator.bindAutomation")));
   }
   function summaryCard(h, label, value) {
     return h("div", { className: "rounded-md border p-3" }, h("dt", { className: "text-sm text-muted-foreground" }, label), h("dd", { className: "mt-1 text-2xl font-semibold" }, value));
@@ -143,6 +156,11 @@
     "coordinator.relations": "Task relations",
     "coordinator.unknown": "Unknown",
     "coordinator.setupAutomations": "Set up Automations",
+    "coordinator.automationBindings": "Automation bindings",
+    "coordinator.noAutomations": "No Automations are available in this workspace.",
+    "coordinator.bindAutomation": "Bind",
+    "coordinator.enabled": "Enabled",
+    "coordinator.disabled": "Disabled",
     "coordinator.reports": "Reports",
     "coordinator.settings": "Coordinator settings",
     "coordinator.refresh": "Refresh reports",
@@ -174,6 +192,11 @@
     "coordinator.relations": "Relations de t\xE2ches",
     "coordinator.unknown": "Inconnu",
     "coordinator.setupAutomations": "Configurer les automatisations",
+    "coordinator.automationBindings": "Liaisons d\u2019automatisation",
+    "coordinator.noAutomations": "Aucune automatisation n\u2019est disponible dans cet espace.",
+    "coordinator.bindAutomation": "Lier",
+    "coordinator.enabled": "Activ\xE9e",
+    "coordinator.disabled": "D\xE9sactiv\xE9e",
     "coordinator.reports": "Rapports",
     "coordinator.settings": "R\xE9glages du coordonnateur",
     "coordinator.refresh": "Actualiser les rapports",
@@ -205,6 +228,11 @@
     "coordinator.relations": "[\u0162\xE5\u0161\u0137 \u0159\xE9\u013C\xE5\u0163\xEE\xF6\xF6\xF1\u0161]",
     "coordinator.unknown": "[\xDB\xF1\u0137\xF1\xF6\xF6\u0175\xF1]",
     "coordinator.setupAutomations": "[\u0160\xE9\u0163 \xFB\xFE \xC5\xFB\u0163\xF6\xF6\u0271\xE5\u0163\xEE\xF6\xF6\xF1\u0161]",
+    "coordinator.automationBindings": "[\xC5\xFB\u0163\xF6\xF6\u0271\xE5\u0163\xEE\xF6\xF6\xF1 \u0180\xEE\xF1\u0111\xEE\xF1\u011D\u0161]",
+    "coordinator.noAutomations": "[\xD1\xF6\xF6 \xC5\xFB\u0163\xF6\xF6\u0271\xE5\u0163\xEE\xF6\xF6\xF1\u0161 \xE5\u0159\xE9 \xE5V\xE5\xEE\u013C\xE5\u0180\u013C\xE9 \xEE\xF1 \u0163\u0125\xEE\u0161 \u0175\xF6\xF6\u0159\u0137\u0161\xFE\xE5\xE7\xE9.]",
+    "coordinator.bindAutomation": "[\xDF\xEE\xF1\u0111]",
+    "coordinator.enabled": "[\xC9\xF1\xE5\u0180\u013C\xE9\u0111]",
+    "coordinator.disabled": "[\xD0\xEE\u0161\xE5\u0180\u013C\xE9\u0111]",
     "coordinator.reports": "[\u0158\xE9\xFE\xF6\xF6\u0159\u0163\u0161]",
     "coordinator.settings": "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \u0161\xE9\u0163\u0163\xEE\xF1\u011D\u0161]",
     "coordinator.refresh": "[\u0158\xE9\u0192\u0159\xE9\u0161\u0125 \u0159\xE9\xFE\xF6\xF6\u0159\u0163\u0161]",
