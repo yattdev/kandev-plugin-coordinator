@@ -26,7 +26,7 @@ jobs:
         with:
           repository: kdlbs/kandev
           path: kandev
-          ref: ff9b8b8ecfd32a7ca00708bbbbff330dc9ccc7a7
+          ref: 30279d79d5aac8e8a340cd452327c0c42a60a02d
           sparse-checkout: |
             apps/backend
             apps/packages/plugin-sdk
