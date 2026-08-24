@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
 )
@@ -12,6 +13,8 @@ const ConversationKey = "coordinator"
 
 var ErrConversationCapabilityUnavailable = errors.New("managed agent conversations are unavailable on this Kandev host")
 var ErrConversationConfigurationRequired = errors.New("a usable coordinator agent profile is required")
+var ErrCoordinatorPrincipalConfigurationRequired = errors.New("a Workspace Coordinator principal must be configured by an operator")
+var ErrCoordinatorAuthorizationRequired = errors.New("Workspace Coordinator authority is unavailable or revoked")
 
 type ConversationSpec struct {
 	WorkspaceID        string
@@ -114,4 +117,18 @@ func ensureConversation(ctx context.Context, manager ConversationManager, worksp
 		WorkspaceID: workspaceID, Key: ConversationKey, AgentProfileID: config.AgentProfile,
 		Instructions: config.BasePrompt, InstructionVersion: "2026-08-16.2",
 	})
+}
+
+func (p *Plugin) ensureWorkspaceConversation(ctx context.Context, workspaceID string, config Config) (ConversationDescriptor, error) {
+	principal, _, err := p.principalStatus(ctx, workspaceID)
+	if err != nil {
+		return ConversationDescriptor{}, err
+	}
+	if principal.Status != "available" {
+		if strings.Contains(principal.Reason, "consent is required") {
+			return ConversationDescriptor{}, ErrCoordinatorPrincipalConfigurationRequired
+		}
+		return ConversationDescriptor{}, ErrCoordinatorAuthorizationRequired
+	}
+	return ensureConversation(ctx, p.manager, workspaceID, config)
 }

@@ -17,6 +17,8 @@ func TestEnsureActionReturnsManagedDescriptor(t *testing.T) {
 		ensureState: "exists",
 	}
 	host := newFakeHost()
+	host.principal = &pluginsdk.WorkspaceAgentPrincipal{ID: "principal-1", WorkspaceID: "workspace-verified", LogicalKey: ConversationKey}
+	host.principalStatus = &pluginsdk.WorkspaceAgentPrincipalStatus{PrincipalID: "principal-1", State: "active", GrantedCapabilities: []string{"orchestrate"}}
 	plugin := NewWithConversationManager(hostConversationManager{manager: manager})
 	plugin.UnimplementedPlugin.SetHost(host)
 	response, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{

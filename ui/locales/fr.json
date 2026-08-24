@@ -30,5 +30,6 @@
 	"coordinator.placeholder": "Écrire au coordonnateur…",
   "coordinator.unavailable": "Les conversations du coordonnateur nécessitent une version compatible de Kandev.",
   "coordinator.configurationRequired": "Configurez un profil d’agent utilisable pour le coordonnateur ou l’espace de travail.",
+  "coordinator.authorizationRequired": "L’autorité Espace de travail + Assistance est requise avant que le coordonnateur puisse envoyer du travail.",
   "coordinator.failed": "La requête du coordonnateur a échoué."
 }

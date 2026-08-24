@@ -10,7 +10,7 @@ export type ConversationDescriptor = {
 };
 
 export type EnsureResponse = {
-  status: "ready" | "unavailable" | "configuration_required" | "error";
+  status: "ready" | "unavailable" | "configuration_required" | "authorization_required" | "error";
   error?: string;
   conversation?: ConversationDescriptor;
 };
@@ -66,7 +66,7 @@ export type CoordinatorRun = {
 };
 
 export type StatusResponse = {
-  status: "ready" | "unavailable" | "configuration_required" | "error";
+  status: "ready" | "unavailable" | "configuration_required" | "authorization_required" | "error";
   message?: string;
   state: CoordinatorState;
   capabilities: CoordinatorState["capabilities"];

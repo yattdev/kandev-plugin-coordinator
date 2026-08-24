@@ -30,5 +30,6 @@
 	"coordinator.placeholder": "[Méššåĝé ţĥé çööřđîñåţööř…]",
   "coordinator.unavailable": "[Çööřđîñåţööř çööñVéřšåţîööñš řéqûîřé å çööɱþåţîƀļé ĶåñđéV ĥööšţ.]",
   "coordinator.configurationRequired": "[Çööñƒîĝûřé å ûšåƀļé çööřđîñåţööř ööř ŵööřķšþåçé þřööƒîļé.]",
+  "coordinator.authorizationRequired": "[Ŵööřķšþåçé + Åššîšţ åûţĥööřîţý îš řéqûîřéđ ƀéƒööřé Çööřđîñåţööř çåñ đîšþåţçĥ ŵööřķ.]",
   "coordinator.failed": "[Çööřđîñåţööř řéqûéšţ ƒåîļéđ.]"
 }

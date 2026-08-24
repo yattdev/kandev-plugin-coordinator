@@ -106,6 +106,7 @@ function chatView(h: CoordinatorHost["React"]["createElement"], host: Coordinato
   const Button = host.ui.Button ?? "button";
   if (!host.ui.WorkspaceAgentChat || ensure?.status === "unavailable") return h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.unavailable"));
   if (ensure?.status === "configuration_required") return h("div", { className: "p-6" }, h("p", { role: "status" }, t("coordinator.configurationRequired")), h(Button, { type: "button", className: "mt-4 min-h-11", onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")));
+  if (ensure?.status === "authorization_required") return h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.authorizationRequired"));
   if (ensure?.status === "error") return h("p", { role: "alert", className: "p-6 text-destructive" }, ensure.error ?? t("coordinator.failed"));
   if (ensure?.conversation) return h(host.ui.WorkspaceAgentChat, { workspaceId, conversationKey: ensure.conversation.key, sessionId: ensure.conversation.session_id ?? "", placeholderOverride: t("coordinator.placeholder"), className: "min-h-0 flex-1 overflow-hidden" });
   return h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.loading"));

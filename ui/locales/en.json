@@ -30,5 +30,6 @@
 	"coordinator.placeholder": "Message the coordinator…",
   "coordinator.unavailable": "Coordinator conversations require a compatible Kandev host.",
   "coordinator.configurationRequired": "Configure a usable coordinator or workspace default agent profile.",
+  "coordinator.authorizationRequired": "Workspace + Assist authority is required before Coordinator can dispatch work.",
   "coordinator.failed": "Coordinator request failed."
 }

@@ -131,6 +131,7 @@
     const Button = host.ui.Button ?? "button";
     if (!host.ui.WorkspaceAgentChat || ensure?.status === "unavailable") return h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.unavailable"));
     if (ensure?.status === "configuration_required") return h("div", { className: "p-6" }, h("p", { role: "status" }, t("coordinator.configurationRequired")), h(Button, { type: "button", className: "mt-4 min-h-11", onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")));
+    if (ensure?.status === "authorization_required") return h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.authorizationRequired"));
     if (ensure?.status === "error") return h("p", { role: "alert", className: "p-6 text-destructive" }, ensure.error ?? t("coordinator.failed"));
     if (ensure?.conversation) return h(host.ui.WorkspaceAgentChat, { workspaceId, conversationKey: ensure.conversation.key, sessionId: ensure.conversation.session_id ?? "", placeholderOverride: t("coordinator.placeholder"), className: "min-h-0 flex-1 overflow-hidden" });
     return h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.loading"));
@@ -173,6 +174,7 @@
     "coordinator.placeholder": "Message the coordinator\u2026",
     "coordinator.unavailable": "Coordinator conversations require a compatible Kandev host.",
     "coordinator.configurationRequired": "Configure a usable coordinator or workspace default agent profile.",
+    "coordinator.authorizationRequired": "Workspace + Assist authority is required before Coordinator can dispatch work.",
     "coordinator.failed": "Coordinator request failed."
   };
 
@@ -209,6 +211,7 @@
     "coordinator.placeholder": "\xC9crire au coordonnateur\u2026",
     "coordinator.unavailable": "Les conversations du coordonnateur n\xE9cessitent une version compatible de Kandev.",
     "coordinator.configurationRequired": "Configurez un profil d\u2019agent utilisable pour le coordonnateur ou l\u2019espace de travail.",
+    "coordinator.authorizationRequired": "L\u2019autorit\xE9 Espace de travail + Assistance est requise avant que le coordonnateur puisse envoyer du travail.",
     "coordinator.failed": "La requ\xEAte du coordonnateur a \xE9chou\xE9."
   };
 
@@ -245,6 +248,7 @@
     "coordinator.placeholder": "[M\xE9\u0161\u0161\xE5\u011D\xE9 \u0163\u0125\xE9 \xE7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159\u2026]",
     "coordinator.unavailable": "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \xE7\xF6\xF6\xF1V\xE9\u0159\u0161\xE5\u0163\xEE\xF6\xF6\xF1\u0161 \u0159\xE9q\xFB\xEE\u0159\xE9 \xE5 \xE7\xF6\xF6\u0271\xFE\xE5\u0163\xEE\u0180\u013C\xE9 \u0136\xE5\xF1\u0111\xE9V \u0125\xF6\xF6\u0161\u0163.]",
     "coordinator.configurationRequired": "[\xC7\xF6\xF6\xF1\u0192\xEE\u011D\xFB\u0159\xE9 \xE5 \xFB\u0161\xE5\u0180\u013C\xE9 \xE7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \xF6\xF6\u0159 \u0175\xF6\xF6\u0159\u0137\u0161\xFE\xE5\xE7\xE9 \xFE\u0159\xF6\xF6\u0192\xEE\u013C\xE9.]",
+    "coordinator.authorizationRequired": "[\u0174\xF6\xF6\u0159\u0137\u0161\xFE\xE5\xE7\xE9 + \xC5\u0161\u0161\xEE\u0161\u0163 \xE5\xFB\u0163\u0125\xF6\xF6\u0159\xEE\u0163\xFD \xEE\u0161 \u0159\xE9q\xFB\xEE\u0159\xE9\u0111 \u0180\xE9\u0192\xF6\xF6\u0159\xE9 \xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \xE7\xE5\xF1 \u0111\xEE\u0161\xFE\xE5\u0163\xE7\u0125 \u0175\xF6\xF6\u0159\u0137.]",
     "coordinator.failed": "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \u0159\xE9q\xFB\xE9\u0161\u0163 \u0192\xE5\xEE\u013C\xE9\u0111.]"
   };
 

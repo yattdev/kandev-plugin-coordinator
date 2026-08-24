@@ -28,12 +28,18 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 		if err != nil {
 			return nil, err
 		}
-		descriptor, err := ensureConversation(ctx, p.manager, workspaceID, config)
+		descriptor, err := p.ensureWorkspaceConversation(ctx, workspaceID, config)
 		if errors.Is(err, ErrConversationCapabilityUnavailable) {
 			return actionJSON(map[string]any{"status": "unavailable", "error": err.Error()})
 		}
 		if errors.Is(err, ErrConversationConfigurationRequired) {
 			return actionJSON(map[string]any{"status": "configuration_required", "error": err.Error()})
+		}
+		if errors.Is(err, ErrCoordinatorPrincipalConfigurationRequired) {
+			return actionJSON(map[string]any{"status": "configuration_required", "error": err.Error()})
+		}
+		if errors.Is(err, ErrCoordinatorAuthorizationRequired) {
+			return actionJSON(map[string]any{"status": "authorization_required", "error": err.Error()})
 		}
 		if err != nil {
 			return nil, err
@@ -97,10 +103,14 @@ func (p *Plugin) handleStatusAction(ctx context.Context, workspaceID string) (*p
 	}
 	if err := config.ReadyForRun(); err != nil {
 		status, message = "configuration_required", err.Error()
-	} else if _, err := ensureConversation(ctx, p.manager, workspaceID, config); errors.Is(err, ErrConversationCapabilityUnavailable) {
+	} else if _, err := p.ensureWorkspaceConversation(ctx, workspaceID, config); errors.Is(err, ErrConversationCapabilityUnavailable) {
 		status, message = "unavailable", err.Error()
 	} else if errors.Is(err, ErrConversationConfigurationRequired) {
 		status, message = "configuration_required", err.Error()
+	} else if errors.Is(err, ErrCoordinatorPrincipalConfigurationRequired) {
+		status, message = "configuration_required", err.Error()
+	} else if errors.Is(err, ErrCoordinatorAuthorizationRequired) {
+		status, message = "authorization_required", err.Error()
 	} else if err != nil {
 		status, message = "error", err.Error()
 	}

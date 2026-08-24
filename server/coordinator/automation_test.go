@@ -30,6 +30,8 @@ func TestAutomationEventDispatchesOneBoundedWorkspaceOccurrence(t *testing.T) {
 		dispatch: pluginsdk.AgentConversationDispatch{Status: "started", Descriptor: pluginsdk.AgentConversationDescriptor{TaskID: "hidden-task"}, SessionID: "session-1"},
 	}
 	host := newFakeHost()
+	host.principal = &pluginsdk.WorkspaceAgentPrincipal{ID: "principal-1", WorkspaceID: "workspace-1", LogicalKey: ConversationKey}
+	host.principalStatus = &pluginsdk.WorkspaceAgentPrincipalStatus{PrincipalID: "principal-1", State: "active", GrantedCapabilities: []string{"orchestrate"}}
 	host.automations["auto-1"] = &pluginsdk.Automation{ID: "auto-1", WorkspaceID: "workspace-1", Name: "Daily standup", Prompt: "Use the automation template.", AgentProfileID: "profile-automation", Enabled: true}
 	host.workflows = []pluginsdk.Workflow{{ID: "workflow-1", WorkspaceID: "workspace-1", Name: "Kanban"}}
 	host.steps["workflow-1"] = []pluginsdk.WorkflowStep{{ID: "step-1", WorkflowID: "workflow-1", Name: "Review", CoordinatorMonitored: true, CoordinatorPrompt: "Check the review lane."}}

@@ -47,7 +47,7 @@ func (p *Plugin) OnEvent(ctx context.Context, event *pluginsdk.Event) error {
 	if strings.TrimSpace(automation.Prompt) != "" {
 		base += "\n\nAutomation instruction:\n" + automation.Prompt
 	}
-	descriptor, err := ensureConversation(ctx, p.manager, event.WorkspaceID, config)
+	descriptor, err := p.ensureWorkspaceConversation(ctx, event.WorkspaceID, config)
 	if err != nil {
 		_ = p.recordAutomationStatus(ctx, event.WorkspaceID, event.EventID, "blocked", err.Error())
 		return err
