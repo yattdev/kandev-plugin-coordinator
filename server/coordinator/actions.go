@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	ActionEnsure         = "coordinator.ensure"
-	ActionStatus         = "coordinator.status"
-	ActionReports        = "coordinator.reports"
-	ActionAutomationBind = "coordinator.automation-bind"
-	ActionAutomations    = "coordinator.automations"
+	ActionEnsure     = "coordinator.ensure"
+	ActionStatus     = "coordinator.status"
+	ActionReports    = "coordinator.reports"
+	ActionRunCycle   = "coordinator.run-cycle"
+	ActionRunStandup = "coordinator.run-standup"
 )
 
 func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {
@@ -28,18 +28,12 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 		if err != nil {
 			return nil, err
 		}
-		descriptor, err := p.ensureWorkspaceConversation(ctx, workspaceID, config)
+		descriptor, err := ensureConversation(ctx, p.manager, workspaceID, config)
 		if errors.Is(err, ErrConversationCapabilityUnavailable) {
 			return actionJSON(map[string]any{"status": "unavailable", "error": err.Error()})
 		}
 		if errors.Is(err, ErrConversationConfigurationRequired) {
 			return actionJSON(map[string]any{"status": "configuration_required", "error": err.Error()})
-		}
-		if errors.Is(err, ErrCoordinatorPrincipalConfigurationRequired) {
-			return actionJSON(map[string]any{"status": "configuration_required", "error": err.Error()})
-		}
-		if errors.Is(err, ErrCoordinatorAuthorizationRequired) {
-			return actionJSON(map[string]any{"status": "authorization_required", "error": err.Error()})
 		}
 		if err != nil {
 			return nil, err
@@ -62,24 +56,22 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 			return nil, err
 		}
 		return actionJSON(page)
-	case ActionAutomationBind:
+	case ActionRunCycle, ActionRunStandup:
 		var input struct {
-			AutomationIDs []string `json:"automation_ids"`
+			IdempotencyKey string `json:"idempotency_key"`
 		}
 		if err := json.Unmarshal(req.Body, &input); err != nil {
-			return nil, fmt.Errorf("coordinator: decoding automation binding request: %w", err)
+			return nil, fmt.Errorf("coordinator: decoding manual run: %w", err)
 		}
-		bindings, err := p.bindAutomations(ctx, workspaceID, input.AutomationIDs)
+		trigger := TriggerCycle
+		if req.ActionKey == ActionRunStandup {
+			trigger = TriggerStandup
+		}
+		result, err := p.RunManual(ctx, workspaceID, trigger, input.IdempotencyKey)
 		if err != nil {
 			return nil, err
 		}
-		return actionJSON(map[string]any{"bindings": bindings})
-	case ActionAutomations:
-		items, err := p.listAllAutomations(ctx, workspaceID)
-		if err != nil {
-			return nil, err
-		}
-		return actionJSON(map[string]any{"automations": items})
+		return actionJSON(map[string]any{"dispatch": result})
 	default:
 		return nil, fmt.Errorf("coordinator: unknown action %q", req.ActionKey)
 	}
@@ -96,25 +88,16 @@ func (p *Plugin) handleStatusAction(ctx context.Context, workspaceID string) (*p
 	}
 	status := "ready"
 	message := ""
-	principal, _, principalErr := p.principalStatus(ctx, workspaceID)
-	state.Capabilities.Principal = principal
-	if principalErr != nil {
-		status, message = "unavailable", principal.Reason
-	}
 	if err := config.ReadyForRun(); err != nil {
 		status, message = "configuration_required", err.Error()
-	} else if _, err := p.ensureWorkspaceConversation(ctx, workspaceID, config); errors.Is(err, ErrConversationCapabilityUnavailable) {
+	} else if _, err := ensureConversation(ctx, p.manager, workspaceID, config); errors.Is(err, ErrConversationCapabilityUnavailable) {
 		status, message = "unavailable", err.Error()
 	} else if errors.Is(err, ErrConversationConfigurationRequired) {
 		status, message = "configuration_required", err.Error()
-	} else if errors.Is(err, ErrCoordinatorPrincipalConfigurationRequired) {
-		status, message = "configuration_required", err.Error()
-	} else if errors.Is(err, ErrCoordinatorAuthorizationRequired) {
-		status, message = "authorization_required", err.Error()
 	} else if err != nil {
 		status, message = "error", err.Error()
 	}
-	return actionJSON(map[string]any{"status": status, "message": message, "config": config, "state": state, "capabilities": state.Capabilities})
+	return actionJSON(map[string]any{"status": status, "message": message, "config": config, "state": state})
 }
 
 func actionJSON(value any) (*pluginsdk.PluginActionResponse, error) {

@@ -8,5 +8,6 @@ import (
 
 func main() {
 	plugin := coordinator.New()
+	defer plugin.Close()
 	pluginsdk.Serve(plugin)
 }

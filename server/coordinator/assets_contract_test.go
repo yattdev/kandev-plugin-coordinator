@@ -12,13 +12,11 @@ import (
 func TestManifestDeclaresManagedConversationContract(t *testing.T) {
 	manifest := readRepositoryFile(t, "manifest.yaml")
 	require.Contains(t, manifest, "agent_conversation: true")
-	require.Contains(t, manifest, "task_relations")
-	require.Contains(t, manifest, "automations")
-	require.Contains(t, manifest, "automation.triggered")
 	require.NotContains(t, manifest, "api_write: [tasks, messages]")
 	require.NotContains(t, manifest, `min_kandev_version: "0.88.0"`)
 	for _, action := range []string{
-		"coordinator.ensure", "coordinator.status", "coordinator.reports", "coordinator.automation-bind", "coordinator.automations",
+		"coordinator.ensure", "coordinator.status", "coordinator.reports",
+		"coordinator.run-cycle", "coordinator.run-standup",
 	} {
 		require.Contains(t, manifest, action)
 	}
@@ -31,13 +29,11 @@ func TestUIBindsCurrentHostContract(t *testing.T) {
 	page := readRepositoryFile(t, filepath.Join("ui", "src", "coordinator-page.ts"))
 	client := readRepositoryFile(t, filepath.Join("ui", "src", "coordinator-client.ts"))
 	require.Contains(t, page, "host.context.getActiveWorkspaceId()")
-	require.Contains(t, page, "conversationKey: ensure.conversation.key")
-	require.Contains(t, page, "sessionId: ensure.conversation.session_id")
-	require.NotContains(t, page, "conversation: ensure.conversation")
-	require.Contains(t, page, "coordinator.overview")
-	require.Contains(t, page, "coordinator.setupAutomations")
+	require.Contains(t, page, "conversationKey: state.ensure.conversation.key")
+	require.Contains(t, page, "sessionId: state.ensure.conversation.session_id")
+	require.NotContains(t, page, "conversation: state.ensure.conversation")
 	require.Contains(t, client, "workspaceId: this.workspaceId")
-	require.NotContains(t, client, "idempotency_key")
+	require.Contains(t, client, "body: { idempotency_key: idempotencyKey }")
 }
 
 func TestPromptAssetsAreAdaptedAndSelfContained(t *testing.T) {

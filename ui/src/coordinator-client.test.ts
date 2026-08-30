@@ -9,16 +9,12 @@ describe("CoordinatorClient", () => {
 
     await client.ensure();
     await client.reports("cursor-1");
-		await client.status();
-		await client.automations();
-		await client.bindAutomations(["automation-1"]);
+    await client.run("cycle", "manual-1");
 
 		expect(invokeAction.mock.calls).toEqual([
 			["coordinator.ensure", { workspaceId: "workspace-1" }, { signal: undefined }],
 			["coordinator.reports", { workspaceId: "workspace-1", body: { cursor: "cursor-1", limit: 20 } }, { signal: undefined }],
-			["coordinator.status", { workspaceId: "workspace-1" }, { signal: undefined }],
-			["coordinator.automations", { workspaceId: "workspace-1" }, { signal: undefined }],
-			["coordinator.automation-bind", { workspaceId: "workspace-1", body: { automation_ids: ["automation-1"] } }, { signal: undefined }],
+			["coordinator.run-cycle", { workspaceId: "workspace-1", body: { idempotency_key: "manual-1" } }, { signal: undefined }],
 		]);
   });
 });

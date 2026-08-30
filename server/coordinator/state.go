@@ -13,12 +13,9 @@ import (
 const (
 	stateKeyV2     = "coordinator_state_v2"
 	legacyStateKey = "coordinator_state"
-	stateVersion   = 3
+	stateVersion   = 2
 	MaxReports     = 200
 	MaxCycleLogs   = 200
-	MaxRuns        = 100
-	MaxFollowUps   = 200
-	MaxInboxItems  = 200
 	cycleLogMaxAge = 7 * 24 * time.Hour
 )
 
@@ -41,86 +38,29 @@ type CycleLog struct {
 	Summary string `json:"summary"`
 }
 
-// CoordinatorIdentity is deliberately logical rather than execution-backed.
-// A host may replace a task or session without changing the Workspace
-// Coordinator's policy, history, inbox, or follow-up obligations.
-type CoordinatorIdentity struct {
-	LogicalKey string `json:"logical_key"`
-}
-
-type CoordinatorRun struct {
-	ID            string `json:"id"`
+type DispatchStatus struct {
+	Trigger       string `json:"trigger,omitempty"`
 	OccurrenceKey string `json:"occurrence_key,omitempty"`
-	Status        string `json:"status"`
-	StartedAt     string `json:"started_at"`
-	FinishedAt    string `json:"finished_at,omitempty"`
-	SessionID     string `json:"session_id,omitempty"`
-	TaskID        string `json:"task_id,omitempty"`
+	Status        string `json:"status,omitempty"`
+	At            string `json:"at,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
-// FollowUp is a durable request/receipt ledger. It describes an obligation,
-// not an authority grant: agents and host APIs remain responsible for any
-// later action.
-type FollowUp struct {
-	ID               string `json:"id"`
-	TargetTaskID     string `json:"target_task_id,omitempty"`
-	TargetSessionID  string `json:"target_session_id,omitempty"`
-	Request          string `json:"request"`
-	ExpectedEvidence string `json:"expected_evidence"`
-	SentAt           string `json:"sent_at"`
-	DueAt            string `json:"due_at,omitempty"`
-	AttemptCount     int    `json:"attempt_count"`
-	Status           string `json:"status"`
-	Fallback         string `json:"fallback,omitempty"`
-	LastObserved     string `json:"last_observed,omitempty"`
-}
-
-type InboxItem struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	TaskID    string `json:"task_id,omitempty"`
-	Title     string `json:"title"`
-	Body      string `json:"body,omitempty"`
-	CreatedAt string `json:"created_at"`
-	Status    string `json:"status"`
-}
-
-type CapabilityState struct {
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-}
-
-// CapabilityStates makes an older host's missing V1 seams visible without a
-// hidden fallback. Principal, inbox, and Automation delivery remain host
-// contracts; the plugin never synthesizes them from a backing task.
-type CapabilityStates struct {
-	Principal   CapabilityState `json:"principal"`
-	Inbox       CapabilityState `json:"inbox"`
-	Automations CapabilityState `json:"automations"`
-	Relations   CapabilityState `json:"relations"`
-}
-
-// AutomationBinding is operator-selected workspace configuration. It stores
-// only a descriptor reference; schedules, event definitions, and secrets stay
-// in Kandev Automations.
-type AutomationBinding struct {
-	AutomationID string `json:"automation_id"`
-	Name         string `json:"name"`
-	BoundAt      string `json:"bound_at"`
+type ScheduleState struct {
+	Armed            bool           `json:"armed"`
+	LastStandupDate  string         `json:"last_standup_date,omitempty"`
+	LastCycleSlot    string         `json:"last_cycle_slot,omitempty"`
+	LastSuccessfulAt string         `json:"last_successful_at,omitempty"`
+	LastDispatch     DispatchStatus `json:"last_dispatch"`
 }
 
 type CoordinatorState struct {
-	Identity           CoordinatorIdentity             `json:"identity"`
-	ActiveFlags        []ActiveFlag                    `json:"active_flags"`
-	TaskSnapshots      map[string]TaskActivitySnapshot `json:"task_snapshots"`
-	Degradations       []string                        `json:"degradations"`
-	LastReportAt       string                          `json:"last_report_at,omitempty"`
-	CycleLogs          []CycleLog                      `json:"cycle_logs"`
-	Runs               []CoordinatorRun                `json:"runs"`
-	FollowUps          []FollowUp                      `json:"follow_ups"`
-	Inbox              []InboxItem                     `json:"inbox"`
-	Capabilities       CapabilityStates                `json:"capabilities"`
-	AutomationBindings []AutomationBinding             `json:"automation_bindings"`
+	ActiveFlags   []ActiveFlag                    `json:"active_flags"`
+	TaskSnapshots map[string]TaskActivitySnapshot `json:"task_snapshots"`
+	Degradations  []string                        `json:"degradations"`
+	LastReportAt  string                          `json:"last_report_at,omitempty"`
+	CycleLogs     []CycleLog                      `json:"cycle_logs"`
+	Schedule      ScheduleState                   `json:"schedule"`
 }
 
 type PublishedState struct {
@@ -128,9 +68,6 @@ type PublishedState struct {
 	TaskSnapshots map[string]TaskActivitySnapshot `json:"task_snapshots"`
 	Degradations  []string                        `json:"degradations"`
 	CycleLog      *CycleLog                       `json:"cycle_log,omitempty"`
-	Runs          []CoordinatorRun                `json:"runs"`
-	FollowUps     []FollowUp                      `json:"follow_ups"`
-	Inbox         []InboxItem                     `json:"inbox"`
 }
 
 type workspaceDocument struct {
@@ -157,11 +94,7 @@ func (l *workspaceLocks) forWorkspace(workspaceID string) *sync.Mutex {
 }
 
 func emptyDocument() workspaceDocument {
-	return workspaceDocument{Version: stateVersion, State: CoordinatorState{
-		Identity:      CoordinatorIdentity{LogicalKey: ConversationKey},
-		TaskSnapshots: map[string]TaskActivitySnapshot{},
-		Capabilities:  hostCapabilityStates(),
-	}}
+	return workspaceDocument{Version: stateVersion, State: CoordinatorState{TaskSnapshots: map[string]TaskActivitySnapshot{}}}
 }
 
 func (p *Plugin) loadDocument(ctx context.Context, workspaceID string) (workspaceDocument, error) {
@@ -174,7 +107,10 @@ func (p *Plugin) loadDocument(ctx context.Context, workspaceID string) (workspac
 		if err := mapInto(value, &doc); err != nil {
 			return workspaceDocument{}, fmt.Errorf("decode coordinator state: %w", err)
 		}
-		normalizeDocument(&doc)
+		doc.Version = stateVersion
+		if doc.State.TaskSnapshots == nil {
+			doc.State.TaskSnapshots = map[string]TaskActivitySnapshot{}
+		}
 		return doc, nil
 	}
 	return p.migrateLegacyDocument(ctx, workspaceID)
@@ -195,12 +131,11 @@ func (p *Plugin) migrateLegacyDocument(ctx context.Context, workspaceID string) 
 		doc.State.LastReportAt = at
 		doc.Reports = []ReportArtifact{{ID: "legacy-report", Type: ReportDaily, Title: "Migrated coordinator report", Body: report, CreatedAt: at}}
 	}
-	normalizeDocument(&doc)
 	return doc, nil
 }
 
 func (p *Plugin) saveDocument(ctx context.Context, workspaceID string, doc workspaceDocument) error {
-	normalizeDocument(&doc)
+	doc.Version = stateVersion
 	value, err := structMap(doc)
 	if err != nil {
 		return err
@@ -234,41 +169,10 @@ func (p *Plugin) updateDocument(ctx context.Context, workspaceID string, update 
 	if len(doc.Reports) > MaxReports {
 		doc.Reports = doc.Reports[:MaxReports]
 	}
-	if len(doc.State.Runs) > MaxRuns {
-		doc.State.Runs = doc.State.Runs[:MaxRuns]
-	}
-	if len(doc.State.FollowUps) > MaxFollowUps {
-		doc.State.FollowUps = doc.State.FollowUps[:MaxFollowUps]
-	}
-	if len(doc.State.Inbox) > MaxInboxItems {
-		doc.State.Inbox = doc.State.Inbox[:MaxInboxItems]
-	}
 	if err := p.saveDocument(ctx, workspaceID, doc); err != nil {
 		return workspaceDocument{}, err
 	}
 	return doc, nil
-}
-
-func normalizeDocument(doc *workspaceDocument) {
-	doc.Version = stateVersion
-	if doc.State.Identity.LogicalKey == "" {
-		doc.State.Identity.LogicalKey = ConversationKey
-	}
-	if doc.State.TaskSnapshots == nil {
-		doc.State.TaskSnapshots = map[string]TaskActivitySnapshot{}
-	}
-	if doc.State.Capabilities.Principal.Status == "" {
-		doc.State.Capabilities = hostCapabilityStates()
-	}
-}
-
-func hostCapabilityStates() CapabilityStates {
-	return CapabilityStates{
-		Principal:   CapabilityState{Status: "unavailable", Reason: "This host does not expose a Coordinator principal API."},
-		Inbox:       CapabilityState{Status: "unavailable", Reason: "This host does not expose a Coordinator inbox API."},
-		Automations: CapabilityState{Status: "degraded", Reason: "Automation delivery can use bound IDs; creation and schedule edits remain in Kandev settings."},
-		Relations:   CapabilityState{Status: "available"},
-	}
 }
 
 func compactCycleLogs(state *CoordinatorState, now time.Time) {

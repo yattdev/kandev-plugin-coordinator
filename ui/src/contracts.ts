@@ -10,7 +10,7 @@ export type ConversationDescriptor = {
 };
 
 export type EnsureResponse = {
-  status: "ready" | "unavailable" | "configuration_required" | "authorization_required" | "error";
+  status: "ready" | "unavailable" | "configuration_required" | "error";
   error?: string;
   conversation?: ConversationDescriptor;
 };
@@ -25,64 +25,9 @@ export type ReportArtifact = {
 
 export type ReportPage = { reports: ReportArtifact[]; next_cursor?: string };
 
-export type CapabilityState = { status: "available" | "unavailable" | "degraded"; reason?: string };
-
-export type CoordinatorState = {
-  identity: { logical_key: string };
-  inbox: InboxItem[];
-  follow_ups: FollowUp[];
-  runs: CoordinatorRun[];
-  capabilities: {
-    principal: CapabilityState;
-    inbox: CapabilityState;
-    automations: CapabilityState;
-    relations: CapabilityState;
-  };
-  automation_bindings: AutomationBinding[];
+export type RunResponse = {
+  dispatch: { status: string; occurrence_key?: string };
 };
-
-export type InboxItem = {
-  id: string;
-  kind: "human_decision" | "pending_reply" | "blocker" | "human_qa";
-  task_id?: string;
-  title: string;
-  body?: string;
-  created_at: string;
-  status: "open" | "acknowledged" | "resolved";
-};
-
-export type FollowUp = {
-  id: string;
-  request: string;
-  expected_evidence: string;
-  due_at?: string;
-  status: "pending" | "acknowledged" | "completed" | "stalled" | "blocked";
-};
-
-export type CoordinatorRun = {
-  id: string;
-  status: "started" | "running" | "completed" | "blocked" | "failed" | "coalesced";
-  started_at: string;
-};
-
-export type StatusResponse = {
-  status: "ready" | "unavailable" | "configuration_required" | "authorization_required" | "error";
-  message?: string;
-  state: CoordinatorState;
-  capabilities: CoordinatorState["capabilities"];
-};
-
-export type AutomationDescriptor = {
-  id: string;
-  workspace_id: string;
-  name: string;
-  description: string;
-  agent_profile_id?: string;
-  enabled: boolean;
-};
-
-export type AutomationPage = { automations: AutomationDescriptor[] };
-export type AutomationBinding = { automation_id: string; name: string; bound_at: string };
 
 export type CoordinatorHost = {
   React: {

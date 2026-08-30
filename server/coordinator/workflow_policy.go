@@ -7,7 +7,7 @@ import (
 
 // selectedChecks reads the workflow-step policy owned by Kandev. The plugin
 // deliberately stores no second copy, so workflow settings remain the sole
-// source of truth for Automation-triggered Coordinator runs.
+// source of truth for both scheduled and manual runs.
 func (p *Plugin) selectedChecks(ctx context.Context, workspaceID string) ([]PolicyCheck, error) {
 	workflows, err := p.listAllWorkflows(ctx, workspaceID)
 	if err != nil {

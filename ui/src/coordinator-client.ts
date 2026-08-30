@@ -1,4 +1,4 @@
-import type { AutomationBinding, AutomationPage, CoordinatorHost, EnsureResponse, ReportPage, StatusResponse } from "./contracts";
+import type { CoordinatorHost, EnsureResponse, ReportPage, RunResponse } from "./contracts";
 
 export class CoordinatorClient {
   constructor(private readonly host: CoordinatorHost, private readonly workspaceId: string) {}
@@ -14,16 +14,17 @@ export class CoordinatorClient {
     }, { signal });
   }
 
-  status(signal?: AbortSignal): Promise<StatusResponse> {
-    return this.host.api.invokeAction<StatusResponse>("coordinator.status", { workspaceId: this.workspaceId }, { signal });
+  run(trigger: "cycle" | "standup", idempotencyKey: string, signal?: AbortSignal): Promise<RunResponse> {
+    const key = trigger === "cycle" ? "coordinator.run-cycle" : "coordinator.run-standup";
+    return this.host.api.invokeAction<RunResponse>(key, {
+      workspaceId: this.workspaceId,
+      body: { idempotency_key: idempotencyKey },
+    }, { signal });
   }
+}
 
-  automations(signal?: AbortSignal): Promise<AutomationPage> {
-    return this.host.api.invokeAction<AutomationPage>("coordinator.automations", { workspaceId: this.workspaceId }, { signal });
-  }
-
-  bindAutomations(automationIds: string[], signal?: AbortSignal): Promise<{ bindings: AutomationBinding[] }> {
-    return this.host.api.invokeAction("coordinator.automation-bind", { workspaceId: this.workspaceId, body: { automation_ids: automationIds } }, { signal });
-  }
-
+export function manualRunKey(trigger: string): string {
+  const cryptoApi = globalThis.crypto;
+  const value = cryptoApi && "randomUUID" in cryptoApi ? cryptoApi.randomUUID() : `${Date.now()}-${Math.random()}`;
+  return `${trigger}-${value}`;
 }
