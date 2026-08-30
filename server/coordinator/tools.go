@@ -18,6 +18,18 @@ func (p *Plugin) InvokeAgentTool(ctx context.Context, req *pluginsdk.AgentToolRe
 		return toolError("A verified workspace context is required."), nil
 	}
 	workspaceID := req.Context.WorkspaceID
+	config, err := p.config(ctx)
+	if err != nil {
+		return nil, err
+	}
+	descriptor, err := ensureConversation(ctx, p.manager, workspaceID, config)
+	if err != nil {
+		return toolError(fmt.Sprintf("Coordinator conversation is unavailable: %v", err)), nil
+	}
+	if req.Context.TaskID == "" || req.Context.SessionID == "" ||
+		req.Context.TaskID != descriptor.TaskID || req.Context.SessionID != descriptor.SessionID {
+		return toolError("Coordinator tools are available only in the managed coordinator conversation."), nil
+	}
 	switch req.Name {
 	case ToolGetState:
 		state, err := p.readState(ctx, workspaceID)

@@ -70,13 +70,22 @@ func TestReportValidationAndCursorPagination(t *testing.T) {
 
 func TestAgentToolsUseVerifiedWorkspaceContext(t *testing.T) {
 	host := newFakeHost()
-	plugin := New()
+	manager := &fakeSDKConversationManager{
+		ensure: pluginsdk.AgentConversationDescriptor{
+			TaskID: "coordinator-task", SessionID: "coordinator-session",
+			WorkspaceID: "workspace-verified", ConversationKey: ConversationKey,
+		},
+		ensureState: "exists",
+	}
+	plugin := NewWithConversationManager(hostConversationManager{manager: manager})
 	plugin.UnimplementedPlugin.SetHost(host)
 	plugin.nowFn = func() time.Time { return time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC) }
 
 	result, err := plugin.InvokeAgentTool(context.Background(), &pluginsdk.AgentToolRequest{
-		Name:    ToolPublishReport,
-		Context: pluginsdk.AgentToolContext{WorkspaceID: "workspace-verified"},
+		Name: ToolPublishReport,
+		Context: pluginsdk.AgentToolContext{
+			WorkspaceID: "workspace-verified", TaskID: "coordinator-task", SessionID: "coordinator-session",
+		},
 		Arguments: map[string]any{
 			"type": "status", "title": "Status", "body": "ok",
 			"state":        map[string]any{"task_snapshots": map[string]any{}},
@@ -93,12 +102,53 @@ func TestAgentToolsUseVerifiedWorkspaceContext(t *testing.T) {
 	require.False(t, found)
 
 	stateResult, err := plugin.InvokeAgentTool(context.Background(), &pluginsdk.AgentToolRequest{
-		Name: ToolGetState, Context: pluginsdk.AgentToolContext{WorkspaceID: "workspace-verified"},
+		Name: ToolGetState, Context: pluginsdk.AgentToolContext{
+			WorkspaceID: "workspace-verified", TaskID: "coordinator-task", SessionID: "coordinator-session",
+		},
 	})
 	require.NoError(t, err)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stateResult.Text), &decoded))
 	require.Contains(t, decoded, "state")
+}
+
+func TestAgentToolsRejectOtherSessionsInTheSameWorkspace(t *testing.T) {
+	tests := []struct{ name, taskID, sessionID string }{
+		{name: "different task", taskID: "ordinary-task", sessionID: "coordinator-session"},
+		{name: "different session", taskID: "coordinator-task", sessionID: "ordinary-session"},
+		{name: "missing identities"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			host := newFakeHost()
+			manager := &fakeSDKConversationManager{
+				ensure: pluginsdk.AgentConversationDescriptor{
+					TaskID: "coordinator-task", SessionID: "coordinator-session",
+					WorkspaceID: "workspace-1", ConversationKey: ConversationKey,
+				},
+				ensureState: "exists",
+			}
+			plugin := NewWithConversationManager(hostConversationManager{manager: manager})
+			plugin.UnimplementedPlugin.SetHost(host)
+
+			result, err := plugin.InvokeAgentTool(context.Background(), &pluginsdk.AgentToolRequest{
+				Name: ToolPublishReport,
+				Context: pluginsdk.AgentToolContext{
+					WorkspaceID: "workspace-1", TaskID: test.taskID, SessionID: test.sessionID,
+				},
+				Arguments: map[string]any{
+					"type": "status", "title": "Forged", "body": "not allowed",
+					"state": map[string]any{"task_snapshots": map[string]any{}},
+				},
+			})
+			require.NoError(t, err)
+			require.True(t, result.IsError)
+			require.Contains(t, result.Text, "managed coordinator conversation")
+			_, found, err := host.GetState(context.Background(), "workspace", "workspace-1", stateKeyV2)
+			require.NoError(t, err)
+			require.False(t, found)
+		})
+	}
 }
 
 func TestWorkspaceHistoryIsBoundedAndOldLogsCompact(t *testing.T) {

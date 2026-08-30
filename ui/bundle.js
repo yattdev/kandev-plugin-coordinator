@@ -37,53 +37,73 @@
       const [workspaceId, setWorkspaceId] = React.useState(host.context.getActiveWorkspaceId() ?? "");
       const client = React.useMemo(() => new CoordinatorClient(host, workspaceId), [host, workspaceId]);
       const [tab, setTab] = React.useState("chat");
-      const [state, setState] = React.useState({ reports: [], loading: true });
+      const [state, setState] = React.useState({ workspaceId, reports: [], loading: true });
       React.useEffect(() => host.context.subscribeActiveWorkspace((next) => setWorkspaceId(next ?? "")), [host]);
       React.useEffect(() => {
         const controller = new AbortController();
         if (!workspaceId) {
-          setState({ reports: [], loading: false, error: t("coordinator.noWorkspace") });
+          setState({ workspaceId, reports: [], loading: false, error: t("coordinator.noWorkspace") });
           return () => controller.abort();
         }
-        setState((current) => ({ ...current, loading: true, error: void 0 }));
+        setState({ workspaceId, reports: [], loading: true });
         Promise.all([client.ensure(controller.signal), client.reports("", controller.signal)]).then(([ensure, page]) => {
-          setState({ ensure, reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false });
+          setState((current) => current.workspaceId === workspaceId ? { workspaceId, ensure, reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false } : current);
         }).catch((error) => {
           if (!controller.signal.aborted) {
-            setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) }));
+            setState(updateCurrentWorkspace(workspaceId, (current) => ({
+              ...current,
+              loading: false,
+              error: error instanceof Error ? error.message : String(error)
+            })));
           }
         });
         return () => controller.abort();
       }, [client, workspaceId, t]);
       const refreshReports = () => {
-        setState((current) => ({ ...current, loading: true, error: void 0 }));
+        setState(updateCurrentWorkspace(workspaceId, (current) => ({ ...current, loading: true, error: void 0 })));
         void client.reports().then(
-          (page) => setState((current) => ({ ...current, reports: page.reports ?? [], nextCursor: page.next_cursor, loading: false })),
-          (error) => setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) }))
+          (page) => setState(updateCurrentWorkspace(workspaceId, (current) => ({
+            ...current,
+            reports: page.reports ?? [],
+            nextCursor: page.next_cursor,
+            loading: false
+          }))),
+          (error) => setState(updateCurrentWorkspace(workspaceId, (current) => ({
+            ...current,
+            loading: false,
+            error: error instanceof Error ? error.message : String(error)
+          })))
         );
       };
       const loadMoreReports = () => {
         if (!state.nextCursor) return;
-        setState((current) => ({ ...current, loading: true, error: void 0 }));
+        setState(updateCurrentWorkspace(workspaceId, (current) => ({ ...current, loading: true, error: void 0 })));
         void client.reports(state.nextCursor).then(
-          (page) => setState((current) => ({
+          (page) => setState(updateCurrentWorkspace(workspaceId, (current) => ({
             ...current,
             reports: [...current.reports, ...page.reports ?? []],
             nextCursor: page.next_cursor,
             loading: false
-          })),
-          (error) => setState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : String(error) }))
+          }))),
+          (error) => setState(updateCurrentWorkspace(workspaceId, (current) => ({
+            ...current,
+            loading: false,
+            error: error instanceof Error ? error.message : String(error)
+          })))
         );
       };
       const run = (trigger) => {
-        setState((current) => ({ ...current, notice: void 0, error: void 0 }));
+        setState(updateCurrentWorkspace(workspaceId, (current) => ({ ...current, notice: void 0, error: void 0 })));
         void client.run(trigger, manualRunKey(trigger)).then(
           (response) => {
             const status = response.dispatch.status;
             const notice = status === "skipped_busy" ? t("coordinator.runBusy") : status === "duplicate_occurrence" ? t("coordinator.runDuplicate") : t("coordinator.runQueued");
-            setState((current) => ({ ...current, notice }));
+            setState(updateCurrentWorkspace(workspaceId, (current) => ({ ...current, notice })));
           },
-          (error) => setState((current) => ({ ...current, error: error instanceof Error ? error.message : t("coordinator.failed") }))
+          (error) => setState(updateCurrentWorkspace(workspaceId, (current) => ({
+            ...current,
+            error: error instanceof Error ? error.message : t("coordinator.failed")
+          })))
         );
       };
       const Button = host.ui.Button ?? "button";
@@ -93,8 +113,9 @@
         "aria-pressed": tab === value,
         onClick: () => setTab(value)
       }, label);
+      const isCurrentWorkspace = state.workspaceId === workspaceId;
       let content;
-      if (state.loading && !state.ensure) {
+      if (!isCurrentWorkspace || state.loading && !state.ensure) {
         content = h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.loading"));
       } else if (!host.ui.WorkspaceAgentChat || state.ensure?.status === "unavailable") {
         content = h("p", { role: "status", className: "p-6 text-muted-foreground" }, t("coordinator.unavailable"));
@@ -133,10 +154,10 @@
             h(Button, { type: "button", className: "min-h-11", onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings"))
           )
         ),
-        state.error ? h("p", { role: "alert", className: "shrink-0 px-4 py-2 text-destructive" }, state.error) : null,
-        state.notice ? h("p", { role: "status", className: "shrink-0 px-4 py-2 text-muted-foreground" }, state.notice) : null,
+        isCurrentWorkspace && state.error ? h("p", { role: "alert", className: "shrink-0 px-4 py-2 text-destructive" }, state.error) : null,
+        isCurrentWorkspace && state.notice ? h("p", { role: "status", className: "shrink-0 px-4 py-2 text-muted-foreground" }, state.notice) : null,
         h("main", { className: "min-h-0 flex-1 overflow-hidden" }, content),
-        tab === "reports" ? h(
+        tab === "reports" && isCurrentWorkspace ? h(
           "footer",
           { className: "flex shrink-0 gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]" },
           h(Button, { type: "button", className: "min-h-11", onClick: refreshReports }, t("coordinator.refresh")),
@@ -144,6 +165,9 @@
         ) : null
       );
     };
+  }
+  function updateCurrentWorkspace(workspaceId, update) {
+    return (current) => current.workspaceId === workspaceId ? update(current) : current;
   }
   function reportsView(h, reports, emptyText) {
     if (reports.length === 0) {
