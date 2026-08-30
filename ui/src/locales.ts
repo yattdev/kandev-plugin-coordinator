@@ -11,5 +11,5 @@ export const coordinatorCatalogs: Record<string, Record<string, string>> = {
 export function localizedLabel(locale: string): string {
   const normalized = locale.toLowerCase();
   const catalog = normalized.startsWith("fr") ? fr : normalized === "qps-ploc" ? qpsPloc : en;
-  return catalog["coordinator.label"];
+  return catalog["coordinator_label"];
 }

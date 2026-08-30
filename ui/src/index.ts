@@ -13,7 +13,7 @@ export function registerCoordinator(registry: CoordinatorRegistry, host: Coordin
     section: "integrations",
   });
   registry.registerRoute("/coordinator", createCoordinatorPage(host), {
-		topbar: { title: label, subtitle: host.i18n.t("coordinator.subtitle"), icon: "bot" },
+		topbar: { title: label, subtitle: host.i18n.t("coordinator_subtitle"), icon: "bot" },
   });
 }
 

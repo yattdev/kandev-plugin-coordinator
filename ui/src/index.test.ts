@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { registerCoordinator } from "./index";
 import type { CoordinatorHost, CoordinatorRegistry } from "./contracts";
-import { localizedLabel } from "./locales";
+import { coordinatorCatalogs, localizedLabel } from "./locales";
 
 describe("registerCoordinator", () => {
   it("registers one localized Integrations destination and route", () => {
@@ -30,7 +30,7 @@ describe("registerCoordinator", () => {
     }));
     expect(registry.registerRoute).toHaveBeenCalledWith("/coordinator", expect.any(Function), expect.any(Object));
 		expect(registry.registerRoute).toHaveBeenCalledWith("/coordinator", expect.any(Function), {
-			topbar: { title: "Coordonnateur", subtitle: "coordinator.subtitle", icon: "bot" },
+			topbar: { title: "Coordonnateur", subtitle: "coordinator_subtitle", icon: "bot" },
 		});
   });
 
@@ -39,4 +39,13 @@ describe("registerCoordinator", () => {
 		expect(localizedLabel("fr-CA")).toBe("Coordonnateur");
 		expect(localizedLabel("qps-ploc")).toContain("Çöö");
 	});
+
+  it("uses host-compatible translation keys", () => {
+    for (const catalog of Object.values(coordinatorCatalogs)) {
+      for (const [key, message] of Object.entries(catalog)) {
+        expect(key).toMatch(/^[a-z][a-zA-Z0-9_-]*$/);
+        expect(message).toEqual(expect.any(String));
+      }
+    }
+  });
 });
