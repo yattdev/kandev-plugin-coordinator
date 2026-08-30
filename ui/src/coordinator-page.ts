@@ -1,6 +1,8 @@
 import { CoordinatorClient, manualRunKey } from "./coordinator-client";
 import type { CoordinatorHost, EnsureResponse, ReportArtifact } from "./contracts";
 
+export const coordinatorButtonClass = "min-h-11 px-4";
+
 type PageState = {
   workspaceId: string;
   ensure?: EnsureResponse;
@@ -111,7 +113,7 @@ export function createCoordinatorPage(host: CoordinatorHost) {
     } else if (state.ensure?.status === "configuration_required") {
       content = h("div", { className: "p-6" },
         h("p", { role: "status" }, t("coordinator.configurationRequired")),
-        h(Button, { type: "button", className: "mt-4 min-h-11", onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")),
+        h(Button, { type: "button", className: `mt-4 ${coordinatorButtonClass}`, onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")),
       );
     } else if (state.ensure?.status === "error") {
 		content = h("p", { role: "alert", className: "p-6 text-destructive" }, state.ensure.error ?? t("coordinator.failed"));
@@ -131,17 +133,17 @@ export function createCoordinatorPage(host: CoordinatorHost) {
       h("header", { className: "flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-2" },
         h("div", { role: "tablist", className: "flex items-center gap-1" }, tabButton("chat", t("coordinator.chat")), tabButton("reports", t("coordinator.reports"))),
         h("div", { className: "flex flex-wrap items-center gap-2" },
-          h(Button, { type: "button", className: "min-h-11", onClick: () => run("cycle") }, t("coordinator.runCycle")),
-          h(Button, { type: "button", className: "min-h-11", onClick: () => run("standup") }, t("coordinator.runStandup")),
-          h(Button, { type: "button", className: "min-h-11", onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")),
+          h(Button, { type: "button", className: coordinatorButtonClass, onClick: () => run("cycle") }, t("coordinator.runCycle")),
+          h(Button, { type: "button", className: coordinatorButtonClass, onClick: () => run("standup") }, t("coordinator.runStandup")),
+          h(Button, { type: "button", className: coordinatorButtonClass, onClick: () => host.navigate("/settings/plugins/kandev-plugin-coordinator") }, t("coordinator.settings")),
         ),
       ),
       isCurrentWorkspace && state.error ? h("p", { role: "alert", className: "shrink-0 px-4 py-2 text-destructive" }, state.error) : null,
       isCurrentWorkspace && state.notice ? h("p", { role: "status", className: "shrink-0 px-4 py-2 text-muted-foreground" }, state.notice) : null,
       h("main", { className: "min-h-0 flex-1 overflow-hidden" }, content),
 			tab === "reports" && isCurrentWorkspace ? h("footer", { className: "flex shrink-0 gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]" },
-				h(Button, { type: "button", className: "min-h-11", onClick: refreshReports }, t("coordinator.refresh")),
-				state.nextCursor ? h(Button, { type: "button", className: "min-h-11", onClick: loadMoreReports }, t("coordinator.loadMore")) : null,
+				h(Button, { type: "button", className: coordinatorButtonClass, onClick: refreshReports }, t("coordinator.refresh")),
+				state.nextCursor ? h(Button, { type: "button", className: coordinatorButtonClass, onClick: loadMoreReports }, t("coordinator.loadMore")) : null,
 			) : null,
     );
   };
