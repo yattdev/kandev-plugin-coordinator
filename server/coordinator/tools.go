@@ -57,7 +57,11 @@ func toolJSON(value map[string]any) (*pluginsdk.AgentToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &pluginsdk.AgentToolResult{Text: string(body), StructuredContent: value}, nil
+	var structured map[string]any
+	if err := json.Unmarshal(body, &structured); err != nil {
+		return nil, err
+	}
+	return &pluginsdk.AgentToolResult{Text: string(body), StructuredContent: structured}, nil
 }
 
 func toolError(message string) *pluginsdk.AgentToolResult {

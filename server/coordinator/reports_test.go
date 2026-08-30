@@ -110,6 +110,11 @@ func TestAgentToolsUseVerifiedWorkspaceContext(t *testing.T) {
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stateResult.Text), &decoded))
 	require.Contains(t, decoded, "state")
+	require.Equal(t, decoded, stateResult.StructuredContent)
+
+	var reportDecoded map[string]any
+	require.NoError(t, json.Unmarshal([]byte(result.Text), &reportDecoded))
+	require.Equal(t, reportDecoded, result.StructuredContent)
 }
 
 func TestAgentToolsRejectOtherSessionsInTheSameWorkspace(t *testing.T) {
