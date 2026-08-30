@@ -214,68 +214,18 @@
     coordinator_failed: "Coordinator request failed."
   };
 
-  // ui/locales/fr.json
-  var fr_default = {
-    coordinator_label: "Coordonnateur",
-    coordinator_subtitle: "Orchestration du tableau",
-    coordinator_chat: "Discussion",
-    coordinator_reports: "Rapports",
-    coordinator_settings: "R\xE9glages du coordonnateur",
-    coordinator_refresh: "Actualiser les rapports",
-    coordinator_loadMore: "Charger plus de rapports",
-    coordinator_runCycle: "Lancer un cycle",
-    coordinator_runStandup: "Lancer le rapport quotidien",
-    coordinator_emptyReports: "Aucun rapport du coordonnateur.",
-    coordinator_loading: "Chargement du coordonnateur\u2026",
-    coordinator_noWorkspace: "S\xE9lectionnez un espace de travail pour utiliser le coordonnateur.",
-    coordinator_placeholder: "\xC9crire au coordonnateur\u2026",
-    coordinator_unavailable: "Les conversations du coordonnateur n\xE9cessitent une version compatible de Kandev.",
-    coordinator_configurationRequired: "Configurez un profil d\u2019agent utilisable pour le coordonnateur ou l\u2019espace de travail.",
-    coordinator_runQueued: "Ex\xE9cution du coordonnateur mise en file.",
-    coordinator_runBusy: "Le coordonnateur est occup\xE9. Cette ex\xE9cution n\u2019a pas \xE9t\xE9 mise en file.",
-    coordinator_runDuplicate: "Cette ex\xE9cution du coordonnateur a d\xE9j\xE0 \xE9t\xE9 trait\xE9e.",
-    coordinator_failed: "La requ\xEAte du coordonnateur a \xE9chou\xE9."
-  };
-
-  // ui/locales/qps-ploc.json
-  var qps_ploc_default = {
-    coordinator_label: "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159]",
-    coordinator_subtitle: "[\xDF\xF6\xF6\xE5\u0159\u0111 \xF6\u0159\xE7\u0125\xE9\u0161\u0163\u0159\xE5\u0163\xEE\xF6\xF6\xF1]",
-    coordinator_chat: "[\xC7\u0125\xE5\u0163]",
-    coordinator_reports: "[\u0158\xE9\xFE\xF6\xF6\u0159\u0163\u0161]",
-    coordinator_settings: "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \u0161\xE9\u0163\u0163\xEE\xF1\u011D\u0161]",
-    coordinator_refresh: "[\u0158\xE9\u0192\u0159\xE9\u0161\u0125 \u0159\xE9\xFE\xF6\xF6\u0159\u0163\u0161]",
-    coordinator_loadMore: "[\u013B\xF6\xF6\xE5\u0111 \u0271\xF6\xF6\u0159\xE9 \u0159\xE9\xFE\xF6\xF6\u0159\u0163\u0161]",
-    coordinator_runCycle: "[\u0158\xFB\xF1 \xE7\xFD\xE7\u013C\xE9 \xF1\xF6\xF6\u0175]",
-    coordinator_runStandup: "[\u0158\xFB\xF1 \u0161\u0163\xE5\xF1\u0111\xFB\xFE \xF1\xF6\xF6\u0175]",
-    coordinator_emptyReports: "[\xD1\xF6\xF6 \xE7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \u0159\xE9\xFE\xF6\xF6\u0159\u0163\u0161 \xFD\xE9\u0163.]",
-    coordinator_loading: "[\u013B\xF6\xF6\xE5\u0111\xEE\xF1\u011D \xE7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159\u2026]",
-    coordinator_noWorkspace: "[\u0160\xE9\u013C\xE9\xE7\u0163 \xE5 \u0175\xF6\xF6\u0159\u0137\u0161\xFE\xE5\xE7\xE9 \u0163\xF6\xF6 \xFB\u0161\xE9 \xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159.]",
-    coordinator_placeholder: "[M\xE9\u0161\u0161\xE5\u011D\xE9 \u0163\u0125\xE9 \xE7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159\u2026]",
-    coordinator_unavailable: "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \xE7\xF6\xF6\xF1V\xE9\u0159\u0161\xE5\u0163\xEE\xF6\xF6\xF1\u0161 \u0159\xE9q\xFB\xEE\u0159\xE9 \xE5 \xE7\xF6\xF6\u0271\xFE\xE5\u0163\xEE\u0180\u013C\xE9 \u0136\xE5\xF1\u0111\xE9V \u0125\xF6\xF6\u0161\u0163.]",
-    coordinator_configurationRequired: "[\xC7\xF6\xF6\xF1\u0192\xEE\u011D\xFB\u0159\xE9 \xE5 \xFB\u0161\xE5\u0180\u013C\xE9 \xE7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \xF6\xF6\u0159 \u0175\xF6\xF6\u0159\u0137\u0161\xFE\xE5\xE7\xE9 \xFE\u0159\xF6\xF6\u0192\xEE\u013C\xE9.]",
-    coordinator_runQueued: "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \u0159\xFB\xF1 q\xFB\xE9\xFB\xE9\u0111.]",
-    coordinator_runBusy: "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \xEE\u0161 \u0180\xFB\u0161\xFD. \u0162\u0125\xEE\u0161 \u0159\xFB\xF1 \u0175\xE5\u0161 \xF1\xF6\u0163 q\xFB\xE9\xFB\xE9\u0111.]",
-    coordinator_runDuplicate: "[\u0162\u0125\xEE\u0161 \xE7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \u0159\xFB\xF1 \u0175\xE5\u0161 \xE5\u013C\u0159\xE9\xE5\u0111\xFD \u0125\xE5\xF1\u0111\u013C\xE9\u0111.]",
-    coordinator_failed: "[\xC7\xF6\xF6\u0159\u0111\xEE\xF1\xE5\u0163\xF6\xF6\u0159 \u0159\xE9q\xFB\xE9\u0161\u0163 \u0192\xE5\xEE\u013C\xE9\u0111.]"
-  };
-
   // ui/src/locales.ts
   var coordinatorCatalogs = {
-    en: en_default,
-    fr: fr_default,
-    "qps-ploc": qps_ploc_default
+    en: en_default
   };
-  function localizedLabel(locale) {
-    const normalized = locale.toLowerCase();
-    const catalog = normalized.startsWith("fr") ? fr_default : normalized === "qps-ploc" ? qps_ploc_default : en_default;
-    return catalog["coordinator_label"];
+  function localizedLabel() {
+    return en_default["coordinator_label"];
   }
 
   // ui/src/index.ts
   function registerCoordinator(registry, host) {
     registry.registerTranslations(coordinatorCatalogs);
-    const label = localizedLabel(host.i18n.locale);
+    const label = localizedLabel();
     registry.registerNavItem({
       id: "coordinator",
       label,

@@ -4,7 +4,7 @@ import { coordinatorCatalogs, localizedLabel } from "./locales";
 
 export function registerCoordinator(registry: CoordinatorRegistry, host: CoordinatorHost): void {
   registry.registerTranslations(coordinatorCatalogs);
-	const label = localizedLabel(host.i18n.locale);
+	const label = localizedLabel();
   registry.registerNavItem({
     id: "coordinator",
 		label,

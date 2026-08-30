@@ -15,7 +15,7 @@ describe("registerCoordinator", () => {
       ui: {},
 			context: { getActiveWorkspaceId: () => "workspace-1", subscribeActiveWorkspace: vi.fn() },
       api: {},
-			i18n: { locale: "fr", t: (key: string) => key, useTranslation: vi.fn() },
+			i18n: { locale: "en", t: (key: string) => key, useTranslation: vi.fn() },
       navigate: vi.fn(),
     } as unknown as CoordinatorHost;
 
@@ -24,20 +24,19 @@ describe("registerCoordinator", () => {
     expect(registry.registerTranslations).toHaveBeenCalledOnce();
     expect(registry.registerNavItem).toHaveBeenCalledWith(expect.objectContaining({
       id: "coordinator",
-      label: "Coordonnateur",
+      label: "Coordinator",
       path: "/coordinator",
       section: "integrations",
     }));
     expect(registry.registerRoute).toHaveBeenCalledWith("/coordinator", expect.any(Function), expect.any(Object));
 		expect(registry.registerRoute).toHaveBeenCalledWith("/coordinator", expect.any(Function), {
-			topbar: { title: "Coordonnateur", subtitle: "coordinator_subtitle", icon: "bot" },
+			topbar: { title: "Coordinator", subtitle: "coordinator_subtitle", icon: "bot" },
 		});
   });
 
-	it("ships English, French, and pseudo-localized labels", () => {
-		expect(localizedLabel("en-US")).toBe("Coordinator");
-		expect(localizedLabel("fr-CA")).toBe("Coordonnateur");
-		expect(localizedLabel("qps-ploc")).toContain("Çöö");
+	it("registers only the host-supported English catalog", () => {
+		expect(Object.keys(coordinatorCatalogs)).toEqual(["en"]);
+		expect(localizedLabel()).toBe("Coordinator");
 	});
 
   it("uses host-compatible translation keys", () => {
