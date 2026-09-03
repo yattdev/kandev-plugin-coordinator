@@ -97,3 +97,47 @@ jobs:
       - name: Test provider-free generated backend
         working-directory: plugin
         run: go test ./server/...
+
+  contract-validation:
+    name: Coordinator policy contract — vendored validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      # Hermetic (no network, stdlib-only): contract self-validation,
+      # plugin-snapshot validation, overlay narrowing/widening proof, the
+      # full vendored test suite, the 78/78 adversarial sweep, and the
+      # manifest checksum proof. See docs/contracts/README.md.
+      - name: make verify-contract
+        run: make verify-contract
+
+  contract-vendor-provenance:
+    name: Coordinator policy contract — vendored tree matches pinned source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          path: plugin
+
+      # Pinned to the exact immutable source SHA recorded in
+      # docs/contracts/PROVENANCE.md. Bump only as part of the deterministic
+      # refresh procedure documented there — never to "latest".
+      - name: Check out pinned immutable contract source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: yattdev/tasks-coordinator
+          path: tasks-coordinator
+          ref: 2ca27d00477dc298fc91187274968f1fc3970fef
+          sparse-checkout: docs/contracts
+
+      - name: Diff vendored tree against pinned source (byte-for-byte)
+        run: |
+          diff -rq tasks-coordinator/docs/contracts/coordinator-policy-contract.json plugin/docs/contracts/upstream/coordinator-policy-contract.json
+          diff -rq tasks-coordinator/docs/contracts/validate_contract.py plugin/docs/contracts/upstream/validate_contract.py
+          diff -rq tasks-coordinator/docs/contracts/adversarial_sweep.py plugin/docs/contracts/upstream/adversarial_sweep.py
+          diff -rq tasks-coordinator/docs/contracts/test_validate_contract.py plugin/docs/contracts/upstream/test_validate_contract.py
+          diff -rq tasks-coordinator/docs/contracts/CONTRACT_MAPPING.md plugin/docs/contracts/upstream/CONTRACT_MAPPING.md
+          diff -rq tasks-coordinator/docs/contracts/fixtures plugin/docs/contracts/upstream/fixtures
+          echo "Vendored docs/contracts/upstream/ is byte-identical to yattdev/tasks-coordinator@2ca27d00477dc298fc91187274968f1fc3970fef."

@@ -2,3 +2,5 @@
 /.build/
 /node_modules/
 *.tar.gz
+__pycache__/
+*.pyc

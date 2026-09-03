@@ -1,0 +1,13 @@
+{
+  "plugin_contract_version": "1.1.0",
+  "vendored_digest": "00bc80871b666c17abacb96382f3e01291421cc8fe4b726f539fc613cdfb84a4",
+  "defaults": {
+    "human_reserved_classes": [
+      "destructive_or_irreversible",
+      "security_or_trust_boundary"
+    ],
+    "exact_head_gates": true,
+    "workers_never_mutate": true,
+    "cross_workspace_authority": false
+  }
+}
