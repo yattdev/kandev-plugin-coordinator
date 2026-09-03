@@ -195,3 +195,15 @@ func TestCanonicalJSON_RecordIDSetSHA256Unaffected(t *testing.T) {
 	// sha256("a&a\nb<b>") — sorted, newline-joined, no JSON escaping at all.
 	require.Len(t, got, 64)
 }
+
+func TestCanonicalJSON_TypedStringMapsPreserveFloatSpelling(t *testing.T) {
+	content := map[string]map[string]map[string]any{
+		"follow_up": {
+			"r1": {"float_zero": 0.0, "integer": int64(1)},
+		},
+	}
+
+	encoded, err := canonicalJSONBytes(content)
+	require.NoError(t, err)
+	require.Equal(t, `{"follow_up":{"r1":{"float_zero":0.0,"integer":1}}}`, string(encoded))
+}

@@ -255,6 +255,18 @@ func normalizeJSONValue(v any) (any, error) {
 			}
 			return out, nil
 		}
+		if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+			out := make(map[string]any, rv.Len())
+			iter := rv.MapRange()
+			for iter.Next() {
+				normalized, err := normalizeJSONValue(iter.Value().Interface())
+				if err != nil {
+					return nil, err
+				}
+				out[iter.Key().String()] = normalized
+			}
+			return out, nil
+		}
 		encoded, err := json.Marshal(v)
 		if err != nil {
 			return nil, err

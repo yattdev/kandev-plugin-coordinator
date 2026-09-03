@@ -1,6 +1,7 @@
 package durablestate
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -121,7 +122,7 @@ func hashSnapshotContent(content map[string]map[string]map[string]any) (int, str
 }
 
 func insertSnapshot(ctx context.Context, tx execer, snap *Snapshot) error {
-	contentEncoded, err := json.Marshal(snap.Content)
+	contentEncoded, err := marshalSnapshotContent(snap.Content)
 	if err != nil {
 		return err
 	}
@@ -134,7 +135,7 @@ func insertSnapshot(ctx context.Context, tx execer, snap *Snapshot) error {
 			snapshot_id, workspace_id, timestamp, trigger, content, byte_count, sha256,
 			record_count, record_id_set_sha256, mutation_log_watermark, fencing_token
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		snap.SnapshotID, snap.WorkspaceID, snap.Timestamp, string(snap.Trigger), string(contentEncoded),
+		snap.SnapshotID, snap.WorkspaceID, snap.Timestamp, string(snap.Trigger), contentEncoded,
 		snap.ByteCount, snap.SHA256, snap.RecordCount, snap.RecordIDSetSHA256, watermark, snap.FencingToken,
 	)
 	return err
@@ -161,8 +162,8 @@ func scanSnapshot(ctx context.Context, tx execer, workspaceID, snapshotID string
 	if err != nil {
 		return nil, err
 	}
-	var content map[string]map[string]map[string]any
-	if err := json.Unmarshal([]byte(contentEncoded), &content); err != nil {
+	content, err := unmarshalSnapshotContent(contentEncoded)
+	if err != nil {
 		return nil, err
 	}
 	var wPtr *int64
@@ -182,6 +183,47 @@ func scanSnapshot(ctx context.Context, tx execer, workspaceID, snapshotID string
 		MutationLogWatermark: wPtr,
 		FencingToken:         fencingToken,
 	}, nil
+}
+
+func marshalSnapshotContent(content map[string]map[string]map[string]any) (string, error) {
+	encoded, err := canonicalJSONBytes(content)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func unmarshalSnapshotContent(s string) (map[string]map[string]map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader([]byte(s)))
+	decoder.UseNumber()
+	var raw any
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, err
+	}
+	restored, err := restoreJSONNumbers(raw)
+	if err != nil {
+		return nil, err
+	}
+	kinds, ok := restored.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("durablestate: invalid snapshot content root %T", restored)
+	}
+	content := make(map[string]map[string]map[string]any, len(kinds))
+	for kind, recordsRaw := range kinds {
+		records, ok := recordsRaw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("durablestate: invalid snapshot record set for kind %q: %T", kind, recordsRaw)
+		}
+		content[kind] = make(map[string]map[string]any, len(records))
+		for recordID, bodyRaw := range records {
+			body, ok := bodyRaw.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("durablestate: invalid snapshot body for record %q: %T", recordID, bodyRaw)
+			}
+			content[kind][recordID] = body
+		}
+	}
+	return content, nil
 }
 
 // ListSnapshots returns every retained snapshot for workspaceID ordered by

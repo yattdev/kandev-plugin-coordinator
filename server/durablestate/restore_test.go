@@ -55,6 +55,32 @@ func TestRestore_ReactivateRecordAppendsAddMutationAndRestoresLiveRow(t *testing
 	require.True(t, found, "expected a restore_reactivation add mutation for ra")
 }
 
+func TestRestore_ReplayFromSnapshotPreservesIntegerNumberHashes(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+
+	token, err := store.AcquireLease(ctx, ws, "leader-a")
+	require.NoError(t, err)
+
+	original := map[string]any{"attempt": int64(1), "score": 1.5}
+	_, err = store.AppendAdd(ctx, ws, token, "ra", KindFollowUp, original, StorageInline)
+	require.NoError(t, err)
+
+	receipt, err := store.Compact(ctx, ws, token, "compaction-number-parity", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, "committed", receipt.Phase)
+
+	replayed, err := store.Replay(ctx, ws, receipt.PreState.SnapshotID, ReplayOptions{})
+	require.NoError(t, err)
+	require.NotContains(t, replayed, "ra")
+
+	preRemoveMutationID := receipt.RolledRecords[0].MutationID - 1
+	beforeRemove, err := store.Replay(ctx, ws, receipt.PreState.SnapshotID, ReplayOptions{TargetMutationID: &preRemoveMutationID})
+	require.NoError(t, err)
+	require.Equal(t, original, beforeRemove["ra"])
+}
+
 func TestRestore_ReactivateRecordIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
