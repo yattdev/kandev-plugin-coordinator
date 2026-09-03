@@ -1,6 +1,7 @@
 package durablestate
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -63,17 +64,87 @@ func TestCanonicalJSON_ByteParityWithPythonReference(t *testing.T) {
 		},
 		{
 			name:        "keys_sorted_recursively",
-			body:        map[string]any{"z": float64(1), "a": float64(2), "m": map[string]any{"y": float64(1), "b": float64(2)}},
+			body:        map[string]any{"z": 1, "a": 2, "m": map[string]any{"y": 1, "b": 2}},
 			wantJSON:    `{"a":2,"m":{"b":2,"y":1},"z":1}`,
 			wantSHA256:  "dcf263fcb20d6d93e196e2ec9816c26fa0790d199080d1b101f2b31ced46ecc1",
 			wantByteLen: 31,
 		},
 		{
 			name:        "list_with_mixed_types_and_html_sensitive_strings",
-			body:        map[string]any{"list": []any{"<x>", "&amp;", float64(3), nil, true, false}},
+			body:        map[string]any{"list": []any{"<x>", "&amp;", 3, nil, true, false}},
 			wantJSON:    `{"list":["<x>","&amp;",3,null,true,false]}`,
 			wantSHA256:  "1fa11637ae019f349daa545494fd25a23a923b44f0db6db99259fe42aee8220d",
 			wantByteLen: 42,
+		},
+		{
+			name:        "float_integral_keeps_point_zero",
+			body:        map[string]any{"n": 1.0},
+			wantJSON:    `{"n":1.0}`,
+			wantSHA256:  "3b6b06ecd1c968c8e738e0f11c4bb361fca80a9a694de22fe66a05286afbd081",
+			wantByteLen: 9,
+		},
+		{
+			name:        "float_zero_keeps_point_zero",
+			body:        map[string]any{"n": 0.0},
+			wantJSON:    `{"n":0.0}`,
+			wantSHA256:  "0d28d3cd77714ad63fcc1827274f09b04ecd51aaa513304f214e5aa9bb3c3219",
+			wantByteLen: 9,
+		},
+		{
+			name:        "float_negative_zero_keeps_sign_and_point_zero",
+			body:        map[string]any{"n": math.Copysign(0, -1)},
+			wantJSON:    `{"n":-0.0}`,
+			wantSHA256:  "a8a313cade05001e69f7ddb5db01e1e2d06fb8f6913ab492cc4506d4e65d465a",
+			wantByteLen: 10,
+		},
+		{
+			name:        "float_fixed_lower_threshold",
+			body:        map[string]any{"n": 0.0001},
+			wantJSON:    `{"n":0.0001}`,
+			wantSHA256:  "eb596b9a807e0fbf971473088cea777fe589a090d1b5b9cc930861de6b95e2aa",
+			wantByteLen: 12,
+		},
+		{
+			name:        "float_small_exponent_uses_python_padding",
+			body:        map[string]any{"n": 1e-6},
+			wantJSON:    `{"n":1e-06}`,
+			wantSHA256:  "0452acdca39d7a817ab05ef761325500377839f3994451f0c8151b1a743ae47f",
+			wantByteLen: 11,
+		},
+		{
+			name:        "float_below_fixed_threshold_uses_exponent",
+			body:        map[string]any{"n": 1e-5},
+			wantJSON:    `{"n":1e-05}`,
+			wantSHA256:  "a4aaff4cb2776bd827d3e6a14a54ccc534ca6b62e36579fc1c53b537c89752a4",
+			wantByteLen: 11,
+		},
+		{
+			name:        "float_large_exponent_uses_python_threshold",
+			body:        map[string]any{"n": 1e20},
+			wantJSON:    `{"n":1e+20}`,
+			wantSHA256:  "ec663afd6a17a8746b0225837f32e4c9247c72d3a18f5e8118bc8f82606d7002",
+			wantByteLen: 11,
+		},
+		{
+			name:        "float_fixed_threshold_keeps_point_zero",
+			body:        map[string]any{"n": 1e15},
+			wantJSON:    `{"n":1000000000000000.0}`,
+			wantSHA256:  "a95e2cc3d8684a865f41e75c24c86d23a4ecb2510f71f07a0ecf84ac367282b9",
+			wantByteLen: 24,
+		},
+		{
+			name:        "float_precision_matches_python_repr",
+			body:        map[string]any{"n": 1.2345678901234567},
+			wantJSON:    `{"n":1.2345678901234567}`,
+			wantSHA256:  "f36cbdfb711d4b436f99e001eb6c2e718febccd575ec1454e86ee79d5225e9be",
+			wantByteLen: 24,
+		},
+		{
+			name:        "float_min_subnormal_matches_python_repr",
+			body:        map[string]any{"n": math.SmallestNonzeroFloat64},
+			wantJSON:    `{"n":5e-324}`,
+			wantSHA256:  "cf4df7d2834198d284947133d3ec7a66f3d94e8d447cac6a0783324211b36d43",
+			wantByteLen: 12,
 		},
 		{
 			name:        "empty_object_and_array",

@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"math"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -34,9 +37,9 @@ func canonicalHash(body map[string]any) (string, error) {
 // escaping limited to '"', '\\', control characters (U+0000-U+001F and
 // U+007F), and every code point at or above U+0080 (escaped to \uXXXX, with
 // UTF-16 surrogate pairs above U+FFFF) — never '<', '>', or '&'. v is first
-// normalized through normalizeJSONValue so any Go-side numeric type
-// collapses to the same float64 representation json.Unmarshal would have
-// produced.
+// normalized through normalizeJSONValue so composite Go values have
+// JSON-compatible shapes and numeric values are emitted with Python's
+// observable int/float spelling.
 func canonicalJSONBytes(v any) ([]byte, error) {
 	normalized, err := normalizeJSONValue(v)
 	if err != nil {
@@ -60,14 +63,13 @@ func writeCanonicalJSON(buf *bytes.Buffer, v any) error {
 			buf.WriteString("false")
 		}
 	case float64:
-		// Number formatting itself is unchanged from prior behavior
-		// (delegated to encoding/json); only the surrounding structural/
-		// string encoding changes here.
-		encoded, err := json.Marshal(val)
+		encoded, err := pythonFloatBytes(val)
 		if err != nil {
 			return err
 		}
 		buf.Write(encoded)
+	case canonicalNumber:
+		buf.WriteString(val.text)
 	case string:
 		writeCanonicalString(buf, val)
 	case []any:
@@ -156,21 +158,133 @@ func writeUnicodeEscape(buf *bytes.Buffer, v uint16) {
 	buf.WriteByte(canonicalHexDigits[v&0xF])
 }
 
+type canonicalNumber struct {
+	text string
+}
+
+func pythonFloatBytes(f float64) ([]byte, error) {
+	if math.IsInf(f, 0) || math.IsNaN(f) {
+		return nil, fmt.Errorf("durablestate: canonical JSON: unsupported non-finite float %v", f)
+	}
+	var out string
+	abs := math.Abs(f)
+	switch {
+	case f == 0:
+		if math.Signbit(f) {
+			out = "-0.0"
+		} else {
+			out = "0.0"
+		}
+	case abs >= 1e-4 && abs < 1e16:
+		out = strconv.FormatFloat(f, 'f', -1, 64)
+		if !strings.Contains(out, ".") {
+			out += ".0"
+		}
+	default:
+		out = strconv.FormatFloat(f, 'e', -1, 64)
+	}
+	return []byte(out), nil
+}
+
 // normalizeJSONValue round-trips a value through JSON encode/decode so that
-// any Go-side numeric type (int, int64, float64, ...) collapses to the same
-// float64/json.Number representation json.Unmarshal would have produced had
-// this body arrived over the wire, keeping hashes stable regardless of how
-// callers constructed the body in memory.
+// composite types have JSON-compatible shapes, while preserving Python's
+// observable int-vs-float serialization distinction for typed Go numeric
+// values. json.Number values are emitted according to their original JSON
+// lexical category: integer tokens stay integers; tokens containing a
+// decimal point or exponent are formatted as Python floats.
 func normalizeJSONValue(v any) (any, error) {
-	encoded, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
+	switch val := v.(type) {
+	case nil, bool, string:
+		return val, nil
+	case json.Number:
+		return normalizeJSONNumber(val)
+	case float32:
+		return float64(val), nil
+	case float64:
+		return val, nil
+	case int:
+		return canonicalNumber{text: strconv.FormatInt(int64(val), 10)}, nil
+	case int8:
+		return canonicalNumber{text: strconv.FormatInt(int64(val), 10)}, nil
+	case int16:
+		return canonicalNumber{text: strconv.FormatInt(int64(val), 10)}, nil
+	case int32:
+		return canonicalNumber{text: strconv.FormatInt(int64(val), 10)}, nil
+	case int64:
+		return canonicalNumber{text: strconv.FormatInt(val, 10)}, nil
+	case uint:
+		return canonicalNumber{text: strconv.FormatUint(uint64(val), 10)}, nil
+	case uint8:
+		return canonicalNumber{text: strconv.FormatUint(uint64(val), 10)}, nil
+	case uint16:
+		return canonicalNumber{text: strconv.FormatUint(uint64(val), 10)}, nil
+	case uint32:
+		return canonicalNumber{text: strconv.FormatUint(uint64(val), 10)}, nil
+	case uint64:
+		return canonicalNumber{text: strconv.FormatUint(val, 10)}, nil
+	case []any:
+		out := make([]any, len(val))
+		for i, item := range val {
+			normalized, err := normalizeJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = normalized
+		}
+		return out, nil
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, item := range val {
+			normalized, err := normalizeJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = normalized
+		}
+		return out, nil
+	default:
+		rv := reflect.ValueOf(v)
+		if rv.IsValid() && rv.Kind() == reflect.Slice {
+			out := make([]any, rv.Len())
+			for i := 0; i < rv.Len(); i++ {
+				normalized, err := normalizeJSONValue(rv.Index(i).Interface())
+				if err != nil {
+					return nil, err
+				}
+				out[i] = normalized
+			}
+			return out, nil
+		}
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		var out any
+		if err := decoder.Decode(&out); err != nil {
+			return nil, err
+		}
+		return normalizeJSONValue(out)
 	}
-	var out any
-	if err := json.Unmarshal(encoded, &out); err != nil {
-		return nil, err
+}
+
+func normalizeJSONNumber(n json.Number) (any, error) {
+	text := n.String()
+	if strings.ContainsAny(text, ".eE") {
+		f, err := strconv.ParseFloat(text, 64)
+		if err != nil {
+			return nil, fmt.Errorf("durablestate: canonical JSON: invalid JSON number %q", text)
+		}
+		return f, nil
 	}
-	return out, nil
+	if _, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return canonicalNumber{text: text}, nil
+	}
+	if _, err := strconv.ParseUint(text, 10, 64); err == nil {
+		return canonicalNumber{text: text}, nil
+	}
+	return nil, fmt.Errorf("durablestate: canonical JSON: invalid JSON integer %q", text)
 }
 
 // canonicalHashBytes is canonicalHash's counterpart for arbitrary

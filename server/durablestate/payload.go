@@ -1,10 +1,13 @@
 package durablestate
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // ErrContentRefUnavailable is returned when a content_ref cannot be
@@ -17,11 +20,7 @@ var ErrContentRefUnavailable = fmt.Errorf("durablestate: content_ref is not avai
 var ErrHashMismatch = fmt.Errorf("durablestate: resolved body hash does not match declared sha256")
 
 func marshalBody(body map[string]any) (string, error) {
-	normalized, err := normalizeJSONValue(body)
-	if err != nil {
-		return "", err
-	}
-	encoded, err := json.Marshal(normalized)
+	encoded, err := canonicalJSONBytes(body)
 	if err != nil {
 		return "", err
 	}
@@ -29,11 +28,62 @@ func marshalBody(body map[string]any) (string, error) {
 }
 
 func unmarshalBody(s string) (map[string]any, error) {
-	var out map[string]any
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader([]byte(s)))
+	decoder.UseNumber()
+	var raw map[string]any
+	if err := decoder.Decode(&raw); err != nil {
 		return nil, err
 	}
-	return out, nil
+	out, err := restoreJSONNumbers(raw)
+	if err != nil {
+		return nil, err
+	}
+	return out.(map[string]any), nil
+}
+
+func restoreJSONNumbers(v any) (any, error) {
+	switch val := v.(type) {
+	case json.Number:
+		text := val.String()
+		if strings.ContainsAny(text, ".eE") {
+			f, err := strconv.ParseFloat(text, 64)
+			if err != nil {
+				return nil, err
+			}
+			return f, nil
+		}
+		i, err := strconv.ParseInt(text, 10, 64)
+		if err == nil {
+			return i, nil
+		}
+		u, err := strconv.ParseUint(text, 10, 64)
+		if err == nil {
+			return u, nil
+		}
+		return nil, fmt.Errorf("durablestate: invalid JSON number %q", text)
+	case []any:
+		out := make([]any, len(val))
+		for i, item := range val {
+			restored, err := restoreJSONNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = restored
+		}
+		return out, nil
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, item := range val {
+			restored, err := restoreJSONNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = restored
+		}
+		return out, nil
+	default:
+		return val, nil
+	}
 }
 
 // putContentStoreRef stores body under its content-address (sha256:<hex>)
