@@ -40,7 +40,7 @@ func (s *Store) ReactivateRecord(ctx context.Context, workspaceID string, fencin
 		case "committed":
 			return existing, nil
 		case "archived":
-			if err := s.finishReactivationApply(ctx, workspaceID, fencingToken, existing, body); err != nil {
+			if err := s.finishReactivationApply(ctx, workspaceID, fencingToken, existing); err != nil {
 				return nil, err
 			}
 			return s.getRestoreReceipt(ctx, workspaceID, restoreID)
@@ -53,7 +53,7 @@ func (s *Store) ReactivateRecord(ctx context.Context, workspaceID string, fencin
 	if err != nil {
 		return nil, err
 	}
-	if err := s.finishReactivationApply(ctx, workspaceID, fencingToken, receipt, body); err != nil {
+	if err := s.finishReactivationApply(ctx, workspaceID, fencingToken, receipt); err != nil {
 		return nil, err
 	}
 	return s.getRestoreReceipt(ctx, workspaceID, restoreID)
@@ -114,7 +114,17 @@ func (s *Store) appendReactivationMutation(ctx context.Context, workspaceID stri
 	return receipt, nil
 }
 
-func (s *Store) finishReactivationApply(ctx context.Context, workspaceID string, fencingToken int64, receipt *CompactionReceipt, body map[string]any) error {
+// finishReactivationApply implements the second, retry-safe phase of §5's
+// crash/retry rule for restore_reactivation: it applies the reactivated
+// record to current_state using the body already durably recorded in the
+// append-only mutation log for this restore_id — never a fresh
+// caller-supplied body. This is what makes a retry (whether from the
+// original ReactivateRecord call completing its second phase, or a crash
+// recovery re-invoking it with restoreID alone) idempotent and fail-closed:
+// the only body a retry can ever commit to current_state is the one the
+// mutation log already says was appended, so a retry called with a
+// different body argument cannot make current_state diverge from the log.
+func (s *Store) finishReactivationApply(ctx context.Context, workspaceID string, fencingToken int64, receipt *CompactionReceipt) error {
 	return s.withWriteTx(ctx, func(tx execer) error {
 		if err := checkFencing(ctx, tx, workspaceID, fencingToken); err != nil {
 			return err
@@ -128,17 +138,24 @@ func (s *Store) finishReactivationApply(ctx context.Context, workspaceID string,
 			return err
 		}
 		if existing == nil {
-			encoded, err := marshalBody(body)
+			mutation, err := getMutationByRestoreID(ctx, tx, workspaceID, receipt.RestoreID)
 			if err != nil {
 				return err
 			}
-			sha, err := canonicalHash(body)
+			if mutation == nil || mutation.After == nil {
+				return fmt.Errorf("durablestate: restore_reactivation %q has no durable mutation-log entry to apply", receipt.RestoreID)
+			}
+			body, err := resolvePayload(ctx, tx, workspaceID, mutation.After)
+			if err != nil {
+				return fmt.Errorf("durablestate: resolving restore_reactivation %q's durable body: %w", receipt.RestoreID, err)
+			}
+			encoded, err := marshalBody(body)
 			if err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO current_state (workspace_id, record_id, record_kind, body, sha256, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-				workspaceID, reactivated.RecordID, string(reactivated.Kind), encoded, sha, nowUTC(),
+				workspaceID, reactivated.RecordID, string(reactivated.Kind), encoded, mutation.After.SHA256, nowUTC(),
 			); err != nil {
 				return err
 			}

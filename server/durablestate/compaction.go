@@ -145,11 +145,7 @@ func (s *Store) archiveCompaction(ctx context.Context, workspaceID string, fenci
 			resolvedAtByID[r.RecordID] = r.ResolvedAt
 		}
 
-		type appendedEntry struct {
-			RecordID string         `json:"record_id"`
-			Body     map[string]any `json:"body"`
-		}
-		appendedForHash := make([]appendedEntry, 0, len(sortedRolled))
+		appendedForHash := make([]any, 0, len(sortedRolled))
 		rolledRecords := make([]RolledRecord, 0, len(sortedRolled))
 		appendedAt := nowUTC()
 
@@ -192,7 +188,7 @@ func (s *Store) archiveCompaction(ctx context.Context, workspaceID string, fenci
 				return err
 			}
 
-			appendedForHash = append(appendedForHash, appendedEntry{RecordID: recordID, Body: body})
+			appendedForHash = append(appendedForHash, map[string]any{"record_id": recordID, "body": body})
 			rolledRecords = append(rolledRecords, RolledRecord{
 				RecordID:   recordID,
 				Kind:       rolledKind[recordID],
@@ -201,7 +197,7 @@ func (s *Store) archiveCompaction(ctx context.Context, workspaceID string, fenci
 			})
 		}
 
-		appendedBytes, err := json.Marshal(appendedForHash)
+		appendedBytes, err := canonicalJSONBytes(appendedForHash)
 		if err != nil {
 			return err
 		}
@@ -330,11 +326,7 @@ func (s *Store) ResumeCompactions(ctx context.Context, workspaceID string, fenci
 }
 
 func hashSnapshotContentFlat(state map[string]map[string]any) (int, string, error) {
-	normalized, err := normalizeJSONValue(state)
-	if err != nil {
-		return 0, "", err
-	}
-	encoded, err := json.Marshal(normalized)
+	encoded, err := canonicalJSONBytes(state)
 	if err != nil {
 		return 0, "", err
 	}

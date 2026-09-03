@@ -80,3 +80,32 @@ func (s *Store) ListMutations(ctx context.Context, workspaceID string) ([]Mutati
 	}
 	return out, rows.Err()
 }
+
+// getMutationByRestoreID returns the single append-only mutation-log entry
+// tagged with restoreID (the add-op appendReactivationMutation wrote), or
+// nil if none exists. Used by finishReactivationApply so a retry of
+// ReactivateRecord can never apply a body other than the one already
+// durably recorded for this restore_id — the mutation log, not any
+// caller-supplied argument, is the sole source of truth for what a retry
+// commits.
+func getMutationByRestoreID(ctx context.Context, tx execer, workspaceID, restoreID string) (*Mutation, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT mutation_id, timestamp, op, record_id, record_kind,
+			before_storage, before_sha256, before_body, before_ref,
+			after_storage, after_sha256, after_body, after_ref,
+			compaction_id, restore_id, fencing_token
+		 FROM mutation_log WHERE workspace_id = ? AND restore_id = ?`,
+		workspaceID, restoreID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	m, err := scanMutationRow(workspaceID, rows)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}

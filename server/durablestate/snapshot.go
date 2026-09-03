@@ -113,11 +113,7 @@ func currentMutationWatermark(ctx context.Context, tx execer, workspaceID string
 // hashSnapshotContent computes §1.1's byte_count/sha256 over the canonical
 // serialization of a snapshot's content map.
 func hashSnapshotContent(content map[string]map[string]map[string]any) (int, string, error) {
-	normalized, err := normalizeJSONValue(content)
-	if err != nil {
-		return 0, "", err
-	}
-	encoded, err := json.Marshal(normalized)
+	encoded, err := canonicalJSONBytes(content)
 	if err != nil {
 		return 0, "", err
 	}
