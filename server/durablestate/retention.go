@@ -117,13 +117,22 @@ func (s *Store) PruneSnapshots(ctx context.Context, workspaceID string, fencingT
 }
 
 // PruneMutations removes every mutation-log entry named by
-// PrunableMutationIDs(ctx, workspaceID, retainedSnapshotIDs). Pruning a
-// mutation-log entry that is the sole remaining reference to a still-
-// unpruned content_ref target is refused (§1.3's availability rule: the two
-// must never drift out of sync) unless the caller also names that ref in
-// pruneContentRefs, in which case both are removed together in the same
-// operation.
-func (s *Store) PruneMutations(ctx context.Context, workspaceID string, retainedSnapshotIDs []string) ([]int64, error) {
+// PrunableMutationIDs(ctx, workspaceID, retainedSnapshotIDs), except any
+// mutation still protected because it is named by rolled_records[].
+// mutation_id on a compaction/restore_reactivation receipt that has not
+// yet reached phase "committed" (still "archived"). Those specific rows
+// are exactly the durable evidence verifyRolledRecordMutationLinkage
+// (compaction.go) needs to independently re-derive trust in that receipt
+// before ResumeCompactions can finish its current-state swap; pruning one
+// out from under a crashed, not-yet-committed rollup would permanently
+// strand it (fail closed forever, since the very evidence needed to ever
+// safely commit it would be gone), which is the concrete case
+// STATE_COMPACTION_SPEC.md's snapshot/retention cadence requirement --
+// "required bodies/references remain available" -- exists to prevent.
+// Like every other write through this package's single fencing boundary
+// (§6), this is checked against fencingToken so a stale, fenced-out leader
+// cannot prune append-only history out from under the current one.
+func (s *Store) PruneMutations(ctx context.Context, workspaceID string, fencingToken int64, retainedSnapshotIDs []string) ([]int64, error) {
 	prunable, err := s.PrunableMutationIDs(ctx, workspaceID, retainedSnapshotIDs)
 	if err != nil {
 		return nil, err
@@ -131,7 +140,25 @@ func (s *Store) PruneMutations(ctx context.Context, workspaceID string, retained
 	if len(prunable) == 0 {
 		return nil, nil
 	}
+	protected, err := s.protectedMutationIDs(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	filtered := prunable[:0:0]
+	for _, id := range prunable {
+		if protected[id] {
+			continue
+		}
+		filtered = append(filtered, id)
+	}
+	prunable = filtered
+	if len(prunable) == 0 {
+		return nil, nil
+	}
 	err = s.withWriteTx(ctx, func(tx execer) error {
+		if err := checkFencing(ctx, tx, workspaceID, fencingToken); err != nil {
+			return err
+		}
 		for _, id := range prunable {
 			if _, err := tx.ExecContext(ctx,
 				`DELETE FROM mutation_log WHERE workspace_id = ? AND mutation_id = ?`, workspaceID, id,
@@ -145,6 +172,30 @@ func (s *Store) PruneMutations(ctx context.Context, workspaceID string, retained
 		return nil, fmt.Errorf("durablestate: pruning mutations for workspace %q: %w", workspaceID, err)
 	}
 	return prunable, nil
+}
+
+// protectedMutationIDs returns the set of mutation_ids named by
+// rolled_records[].mutation_id on any compaction/restore_reactivation
+// receipt in workspaceID that has not yet reached phase "committed" (i.e.
+// is still "archived"). See PruneMutations for why these must survive
+// pruning regardless of snapshot watermark.
+func (s *Store) protectedMutationIDs(ctx context.Context, workspaceID string) (map[int64]bool, error) {
+	receipts, err := s.ListCompactionReceipts(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	protected := make(map[int64]bool)
+	for _, r := range receipts {
+		if r.Phase == "committed" {
+			continue
+		}
+		for _, rec := range r.RolledRecords {
+			if rec.MutationID != 0 {
+				protected[rec.MutationID] = true
+			}
+		}
+	}
+	return protected, nil
 }
 
 // SaveReplayCheckpoint records "successfully applied up to mutation_id = k"
