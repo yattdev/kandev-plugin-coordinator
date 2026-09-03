@@ -6,3 +6,6 @@ secret:
   # a credential and must remain byte-identical to the pinned source tree.
   ignored_paths:
     - 'docs/contracts/upstream/fixtures/exclusion_leak_contract.json'
+  ignored_matches:
+    - name: intentional contract validator negative fixture
+      match: 68cceecd8161581b0afa17171a98327c396e9f7575b4c566fed155ecb4ac16b9
