@@ -391,6 +391,7 @@ func verifyArchiveForCompaction(ctx context.Context, tx execer, workspaceID stri
 	sort.Strings(sortedIDs)
 
 	appendedForHash := make([]any, 0, len(sortedIDs))
+	archivedSHAByRecordID := make(map[string]string, len(sortedIDs))
 	for _, recordID := range sortedIDs {
 		var bodyEncoded, bodySHA string
 		err := tx.QueryRowContext(ctx,
@@ -415,6 +416,7 @@ func verifyArchiveForCompaction(ctx context.Context, tx execer, workspaceID stri
 			return fmt.Errorf("durablestate: recovering compaction %q: %w for archived record %q (recomputed=%s stored=%s)", receipt.CompactionID, ErrHashMismatch, recordID, recomputed, bodySHA)
 		}
 		appendedForHash = append(appendedForHash, map[string]any{"record_id": recordID, "body": body})
+		archivedSHAByRecordID[recordID] = bodySHA
 	}
 
 	appendedBytes, err := canonicalJSONBytes(appendedForHash)
@@ -437,6 +439,59 @@ func verifyArchiveForCompaction(ctx context.Context, tx execer, workspaceID stri
 	}
 	if err := CheckCompactionCorrelation(receipt, mutations); err != nil {
 		return fmt.Errorf("durablestate: recovering compaction %q: %w; fail closed, not applying current-state swap", receipt.CompactionID, err)
+	}
+	if err := verifyRolledRecordMutationLinkage(receipt, mutations, archivedSHAByRecordID); err != nil {
+		return fmt.Errorf("durablestate: recovering compaction %q: %w; fail closed, not applying current-state swap", receipt.CompactionID, err)
+	}
+	return nil
+}
+
+// verifyRolledRecordMutationLinkage cross-checks that every rolled record
+// in receipt correlates to *exactly* the mutation-log remove entry the
+// original rollup itself wrote for it, not merely to some remove entry
+// carrying the same record_id and compaction_id. CheckCompactionCorrelation
+// only compares the two sets of record_ids (mirroring the reference spec's
+// minimal check); that is not enough for recovery, which must independently
+// re-derive trust in a receipt purely from durable, cross-checkable
+// evidence (§4/§5's fail-closed discipline). A remove mutation-log row
+// whose declared mutation_id, before_ref, or before_sha256 were altered or
+// substituted -- even while keeping the same workspace_id, compaction_id,
+// and record_id, and even if internally hash-self-consistent -- no longer
+// matches the exact archive-append location and content this rollup wrote,
+// and recovery must reject it rather than silently finish the swap.
+// archivedSHAByRecordID supplies the ground-truth sha256 already
+// independently recomputed from the archive body for each rolled record
+// (never the mutation log's own claim), so a substituted before_sha256
+// cannot pass by being internally self-consistent with a substituted ref.
+func verifyRolledRecordMutationLinkage(receipt *CompactionReceipt, mutations []Mutation, archivedSHAByRecordID map[string]string) error {
+	removeByRecordID := make(map[string]Mutation, len(mutations))
+	for _, m := range mutations {
+		if m.Op == OpRemove && m.CompactionID == receipt.CompactionID {
+			removeByRecordID[m.RecordID] = m
+		}
+	}
+	for _, r := range receipt.RolledRecords {
+		m, ok := removeByRecordID[r.RecordID]
+		if !ok {
+			return fmt.Errorf("rolled record %q has no correlated remove mutation-log entry", r.RecordID)
+		}
+		if m.MutationID != r.MutationID {
+			return fmt.Errorf("rolled record %q declares mutation_id %d in the receipt but its correlated remove mutation-log entry has mutation_id %d", r.RecordID, r.MutationID, m.MutationID)
+		}
+		if m.Before == nil || m.Before.Storage != StorageContentRef {
+			return fmt.Errorf("rolled record %q's remove mutation-log entry (mutation_id %d) does not carry a content_ref before-side pointing at the archive", r.RecordID, m.MutationID)
+		}
+		wantRef := fmt.Sprintf("archive:%s:%s", receipt.CompactionID, r.RecordID)
+		if m.Before.Ref != wantRef {
+			return fmt.Errorf("rolled record %q's remove mutation-log entry (mutation_id %d) before_ref is %q, want %q", r.RecordID, m.MutationID, m.Before.Ref, wantRef)
+		}
+		archivedSHA, ok := archivedSHAByRecordID[r.RecordID]
+		if !ok {
+			return fmt.Errorf("rolled record %q has no independently recomputed archive sha256 to correlate against", r.RecordID)
+		}
+		if m.Before.SHA256 != archivedSHA {
+			return fmt.Errorf("rolled record %q's remove mutation-log entry (mutation_id %d) before_sha256 %s does not match the archive's actual recomputed sha256 %s for that record", r.RecordID, m.MutationID, m.Before.SHA256, archivedSHA)
+		}
 	}
 	return nil
 }

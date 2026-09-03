@@ -184,6 +184,62 @@ func TestCompaction_RecoveryFailsClosedWhenCorrelatedMutationDeleted(t *testing.
 	require.Equal(t, int64(1), health.CompactionRecoveryVerificationFailures)
 }
 
+// TestCompaction_RecoveryFailsClosedWhenCorrelatedMutationSubstituted
+// simulates a receipt stuck in phase "archived" whose correlated
+// remove-op mutation-log entry has had its before_ref/before_sha256
+// substituted -- while its workspace_id, compaction_id, and record_id are
+// left untouched, and the substituted ref/sha256 pair remains internally
+// self-consistent (points at a real, differently-archived body whose hash
+// matches the substituted sha256). CheckCompactionCorrelation's
+// record_id-set comparison alone cannot catch this: both sets still agree
+// on "ra". Recovery must independently re-derive the mutation's linkage to
+// *this* compaction's own archive-append location and content -- not just
+// trust that a same-shaped remove entry with the right ids exists -- and
+// fail closed rather than commit a current-state swap correlated to
+// substituted evidence.
+func TestCompaction_RecoveryFailsClosedWhenCorrelatedMutationSubstituted(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	token := setupWorkspaceWithRecords(t, store, ws, 3)
+
+	receipt, err := store.archiveCompaction(ctx, ws, token, "compaction-substituted", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, "archived", receipt.Phase)
+
+	// Archive a second, unrelated compaction's record so the substituted
+	// before_ref/before_sha256 point at real, hash-consistent archived
+	// content -- just not the content this receipt's rollup itself wrote.
+	_, err = store.archiveCompaction(ctx, ws, token, "compaction-other", []RolledRecordInput{{RecordID: "rb", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+
+	var otherSHA string
+	require.NoError(t, store.db.QueryRowContext(ctx,
+		`SELECT sha256 FROM archive WHERE workspace_id = ? AND compaction_id = ? AND record_id = ?`,
+		ws, "compaction-other", "rb",
+	).Scan(&otherSHA))
+
+	res, err := store.db.ExecContext(ctx,
+		`UPDATE mutation_log SET before_ref = ?, before_sha256 = ?
+		 WHERE workspace_id = ? AND compaction_id = ? AND record_id = ?`,
+		"archive:compaction-other:rb", otherSHA, ws, "compaction-substituted", "ra")
+	require.NoError(t, err)
+	affected, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected)
+
+	_, err = store.ResumeCompactions(ctx, ws, token)
+	require.Error(t, err, "recovery must fail closed when the correlated remove mutation's before_ref/before_sha256 have been substituted, even when internally hash-consistent")
+
+	_, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found, "current_state must not be mutated when mutation-linkage revalidation fails")
+
+	stillArchived, err := store.getCompactionReceipt(ctx, ws, "compaction-substituted")
+	require.NoError(t, err)
+	require.Equal(t, "archived", stillArchived.Phase, "the receipt must not be committed when its mutation linkage failed revalidation")
+}
+
 // TestCompaction_RecoveryFailsClosedWhenArchiveBodyTampered simulates the
 // archive row still existing but its body having been substituted after
 // the crash (e.g. a torn write, disk corruption). The row's own stored
