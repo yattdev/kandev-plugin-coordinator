@@ -97,6 +97,130 @@ func TestCompaction_TornWriteBetweenArchiveAndSwapIsRecoveredOnResume(t *testing
 	require.Equal(t, int64(1), health.CompactionRecoveries)
 }
 
+// TestCompaction_RecoveryFailsClosedWhenArchiveContentMissing simulates a
+// receipt stuck in phase "archived" (crashed between §5 steps (c) and (d))
+// whose backing archive row has since gone missing (e.g. corruption,
+// accidental deletion, a substituted/incomplete archive). Recovery
+// (ResumeCompactions -> finishCompactionSwap) must fail closed: it must
+// not delete the still-live current_state row and must not mark the
+// receipt "committed", because doing so would silently lose the only
+// durable copy of the rolled record's body.
+func TestCompaction_RecoveryFailsClosedWhenArchiveContentMissing(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	token := setupWorkspaceWithRecords(t, store, ws, 3)
+
+	receipt, err := store.archiveCompaction(ctx, ws, token, "compaction-missing-archive", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, "archived", receipt.Phase)
+
+	// Simulate the archive content going missing between the crash and
+	// recovery (corruption, disk issue, accidental deletion, etc).
+	res, err := store.db.ExecContext(ctx,
+		`DELETE FROM archive WHERE workspace_id = ? AND compaction_id = ? AND record_id = ?`, ws, "compaction-missing-archive", "ra")
+	require.NoError(t, err)
+	affected, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected)
+
+	_, err = store.ResumeCompactions(ctx, ws, token)
+	require.Error(t, err, "recovery must fail closed when the archive content backing a rolled record is missing")
+
+	// current_state must be untouched: the record must still be live, the
+	// receipt must still be stuck in "archived" (never incorrectly
+	// promoted to "committed").
+	_, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found, "current_state must not be mutated when archive revalidation fails")
+
+	stillArchived, err := store.getCompactionReceipt(ctx, ws, "compaction-missing-archive")
+	require.NoError(t, err)
+	require.Equal(t, "archived", stillArchived.Phase, "the receipt must not be committed when its backing archive content failed revalidation")
+
+	health, err := store.GetHealth(ctx, ws)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), health.CompactionRecoveryVerificationFailures)
+}
+
+// TestCompaction_RecoveryFailsClosedWhenCorrelatedMutationDeleted
+// simulates a receipt stuck in phase "archived" whose correlated
+// remove-op mutation-log entry (the durable record of which record_ids
+// this compaction_id rolled) has since been deleted. Recovery must fail
+// closed rather than commit a current-state swap that no longer
+// correlates to any mutation-log entry.
+func TestCompaction_RecoveryFailsClosedWhenCorrelatedMutationDeleted(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	token := setupWorkspaceWithRecords(t, store, ws, 3)
+
+	receipt, err := store.archiveCompaction(ctx, ws, token, "compaction-missing-mutation", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, "archived", receipt.Phase)
+
+	// Simulate the correlated remove-op mutation-log entry being deleted
+	// between the crash and recovery.
+	res, err := store.db.ExecContext(ctx,
+		`DELETE FROM mutation_log WHERE workspace_id = ? AND compaction_id = ? AND record_id = ?`, ws, "compaction-missing-mutation", "ra")
+	require.NoError(t, err)
+	affected, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected)
+
+	_, err = store.ResumeCompactions(ctx, ws, token)
+	require.Error(t, err, "recovery must fail closed when the receipt's correlated mutation-log entry is missing")
+
+	_, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found, "current_state must not be mutated when mutation-log correlation revalidation fails")
+
+	stillArchived, err := store.getCompactionReceipt(ctx, ws, "compaction-missing-mutation")
+	require.NoError(t, err)
+	require.Equal(t, "archived", stillArchived.Phase)
+
+	health, err := store.GetHealth(ctx, ws)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), health.CompactionRecoveryVerificationFailures)
+}
+
+// TestCompaction_RecoveryFailsClosedWhenArchiveBodyTampered simulates the
+// archive row still existing but its body having been substituted after
+// the crash (e.g. a torn write, disk corruption). The row's own stored
+// sha256 no longer matches a hash recomputed from its (tampered) body, so
+// recovery must fail closed rather than trust the row at face value.
+func TestCompaction_RecoveryFailsClosedWhenArchiveBodyTampered(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	token := setupWorkspaceWithRecords(t, store, ws, 3)
+
+	receipt, err := store.archiveCompaction(ctx, ws, token, "compaction-tampered", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, "archived", receipt.Phase)
+
+	tampered, err := marshalBody(map[string]any{"n": float64(999)})
+	require.NoError(t, err)
+	res, err := store.db.ExecContext(ctx,
+		`UPDATE archive SET body = ? WHERE workspace_id = ? AND compaction_id = ? AND record_id = ?`,
+		tampered, ws, "compaction-tampered", "ra")
+	require.NoError(t, err)
+	affected, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected)
+
+	_, err = store.ResumeCompactions(ctx, ws, token)
+	require.Error(t, err, "recovery must fail closed when an archive row's body no longer matches its own stored sha256")
+
+	_, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found, "current_state must not be mutated when archive content hash verification fails")
+
+	stillArchived, err := store.getCompactionReceipt(ctx, ws, "compaction-tampered")
+	require.NoError(t, err)
+	require.Equal(t, "archived", stillArchived.Phase)
+}
+
 func TestCompaction_RepeatedCompletionIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)

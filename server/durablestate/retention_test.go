@@ -60,6 +60,75 @@ func TestReplay_RestoreToArbitraryTimestampBetweenMutations(t *testing.T) {
 	require.Equal(t, bodyV1, stateAtT["f1"])
 }
 
+// TestReplay_TargetTimestampBoundaryExcludesNanosecondAfterCutoff guards
+// against comparing RFC3339Nano timestamps as raw strings: a mutation
+// timestamped exactly one nanosecond after the whole-second cutoff (e.g.
+// "...T00:00:00.000000001Z" against a target of "...T00:00:00Z") sorts
+// lexicographically *before* the bare "Z" cutoff (because '.' < 'Z' in
+// ASCII), which would incorrectly include it when restoring to exactly
+// the cutoff instant. Comparing parsed time instants must exclude it.
+func TestReplay_TargetTimestampBoundaryExcludesNanosecondAfterCutoff(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	bodyV1 := map[string]any{"status": "open"}
+	bodyV2 := map[string]any{"status": "resolved"}
+	log := []Mutation{
+		{MutationID: 1, WorkspaceID: ws, Timestamp: "2026-09-03T00:00:00Z", Op: OpAdd, RecordID: "f1", RecordKind: KindFollowUp,
+			After: mkInlineSide(t, bodyV1), FencingToken: 1},
+		// One nanosecond after the cutoff below.
+		{MutationID: 2, WorkspaceID: ws, Timestamp: "2026-09-03T00:00:00.000000001Z", Op: OpUpdate, RecordID: "f1", RecordKind: KindFollowUp,
+			Before: mkInlineSide(t, bodyV1), After: mkInlineSide(t, bodyV2), FencingToken: 1},
+	}
+	stateAtCutoff, err := store.replayMutations(ctx, ws, map[string]map[string]any{}, log, ReplayOptions{TargetTimestamp: "2026-09-03T00:00:00Z"})
+	require.NoError(t, err)
+	require.Equal(t, bodyV1, stateAtCutoff["f1"], "mutation_id 2, timestamped 1ns after the cutoff, must not be applied when restoring to exactly the cutoff instant")
+
+	// Restoring to (or past) the mutation's own instant must include it.
+	stateAfter, err := store.replayMutations(ctx, ws, map[string]map[string]any{}, log, ReplayOptions{TargetTimestamp: "2026-09-03T00:00:00.000000001Z"})
+	require.NoError(t, err)
+	require.Equal(t, bodyV2, stateAfter["f1"])
+}
+
+// TestReplayFromCheckpoint_TargetTimestampBoundaryExcludesNanosecondAfterCutoff
+// exercises the same boundary against ReplayFromCheckpoint's own
+// checkpoint-watermark bookkeeping loop (retention.go), which duplicates
+// replay's target_timestamp cutoff logic for computing maxApplied.
+func TestReplayFromCheckpoint_TargetTimestampBoundaryExcludesNanosecondAfterCutoff(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	token := setupWorkspaceWithRecords(t, store, ws, 1) // ra
+
+	snap, err := store.CaptureSnapshot(ctx, ws, TriggerScheduledCadence, token)
+	require.NoError(t, err)
+
+	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE mutation_log SET timestamp = ? WHERE workspace_id = ? AND record_id = ? AND op = 'add'`,
+			"2026-09-03T00:00:00Z", ws, "ra")
+		return err
+	}))
+
+	m2, err := store.AppendUpdate(ctx, ws, token, "ra", map[string]any{"n": float64(42)}, StorageInline)
+	require.NoError(t, err)
+	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE mutation_log SET timestamp = ? WHERE workspace_id = ? AND mutation_id = ?`,
+			"2026-09-03T00:00:00.000000001Z", ws, m2.MutationID)
+		return err
+	}))
+
+	state, err := store.ReplayFromCheckpoint(ctx, ws, snap.SnapshotID, "ckpt-boundary", ReplayOptions{TargetTimestamp: "2026-09-03T00:00:00Z"})
+	require.NoError(t, err)
+	require.Equal(t, float64(0), state["ra"]["n"], "update 1ns after the cutoff must not be applied when restoring to exactly the cutoff instant")
+
+	checkpointed, ok, err := store.LoadReplayCheckpoint(ctx, ws, "ckpt-boundary")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Less(t, checkpointed, m2.MutationID, "the checkpoint watermark must not advance past a mutation excluded by the timestamp cutoff")
+}
+
 func TestRetention_PrunableSnapshotIDsKeepsNewestN(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)

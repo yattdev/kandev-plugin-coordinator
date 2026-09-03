@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 )
 
 // ReplayError reports corrupt or inconsistent input detected during
@@ -85,6 +86,33 @@ func sortedSlice(set map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// timestampAfter reports whether RFC3339Nano timestamp a names an instant
+// strictly after RFC3339Nano timestamp b, comparing them as parsed time
+// instants rather than as raw bytes. A byte-wise/lexicographic comparison
+// of RFC3339Nano strings is unsound exactly at a whole-second boundary: a
+// timestamp carrying a fractional-seconds suffix (e.g.
+// "...T00:00:00.000000001Z", one nanosecond past the second) sorts
+// *before* the same second with no fractional suffix (e.g.
+// "...T00:00:00Z") under raw string comparison, because '.' (0x2E) is
+// less than 'Z' (0x5A) -- even though the fractional-second instant is
+// later in wall-clock time. That mis-ordering previously let a
+// restore/replay cutoff of exactly "...T00:00:00Z" incorrectly include a
+// mutation timestamped one nanosecond *after* it. Comparing parsed
+// instants avoids the mis-classification; a timestamp this store did not
+// itself produce in valid RFC3339Nano form is corrupt input and aborts
+// replay rather than falling back to an unsound comparison.
+func timestampAfter(a, b string) (bool, error) {
+	ta, err := time.Parse(time.RFC3339Nano, a)
+	if err != nil {
+		return false, replayErrorf("cannot parse mutation timestamp %q as RFC3339Nano: %v", a, err)
+	}
+	tb, err := time.Parse(time.RFC3339Nano, b)
+	if err != nil {
+		return false, replayErrorf("cannot parse target_timestamp %q as RFC3339Nano: %v", b, err)
+	}
+	return ta.After(tb), nil
 }
 
 // CheckCompactionCorrelation mirrors replay_reference.py's
@@ -202,8 +230,10 @@ type ReplayOptions struct {
 	// mutation with mutation_id <= *TargetMutationID.
 	TargetMutationID *int64
 	// TargetTimestamp, if non-empty, stops replay after applying the last
-	// mutation with timestamp <= TargetTimestamp (RFC3339 string
-	// comparison, matching the storage format's lexicographic ordering).
+	// mutation whose timestamp, parsed as an RFC3339Nano instant, is at or
+	// before TargetTimestamp (also parsed as an RFC3339Nano instant --
+	// never a raw byte/lexicographic comparison of the two strings; see
+	// timestampAfter).
 	TargetTimestamp string
 }
 
@@ -266,8 +296,14 @@ func (s *Store) replayMutations(ctx context.Context, workspaceID string, state m
 		if opts.TargetMutationID != nil && m.MutationID > *opts.TargetMutationID {
 			break
 		}
-		if opts.TargetTimestamp != "" && m.Timestamp > opts.TargetTimestamp {
-			break
+		if opts.TargetTimestamp != "" {
+			after, err := timestampAfter(m.Timestamp, opts.TargetTimestamp)
+			if err != nil {
+				return nil, err
+			}
+			if after {
+				break
+			}
 		}
 		applied = append(applied, m)
 	}

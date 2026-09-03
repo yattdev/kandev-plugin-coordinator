@@ -235,8 +235,14 @@ func (s *Store) ReplayFromCheckpoint(ctx context.Context, workspaceID, snapshotI
 		if opts.TargetMutationID != nil && m.MutationID > *opts.TargetMutationID {
 			continue
 		}
-		if opts.TargetTimestamp != "" && m.Timestamp > opts.TargetTimestamp {
-			continue
+		if opts.TargetTimestamp != "" {
+			after, err := timestampAfter(m.Timestamp, opts.TargetTimestamp)
+			if err != nil {
+				return nil, err
+			}
+			if after {
+				continue
+			}
 		}
 		if m.MutationID > maxApplied {
 			maxApplied = m.MutationID

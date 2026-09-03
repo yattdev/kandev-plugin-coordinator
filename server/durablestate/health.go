@@ -50,6 +50,15 @@ type Health struct {
 	// CompactionRecoveries counts every receipt ResumeCompactions has had
 	// to finish (i.e. a crash was detected between §5 steps (c) and (d)).
 	CompactionRecoveries int64
+	// CompactionRecoveryVerificationFailures counts every time
+	// finishCompactionSwap's pre-swap revalidation (archive content
+	// hashes/byte counts/rolled-record-id-set, and mutation-log
+	// compaction_id correlation) rejected a receipt -- most notably during
+	// crash recovery (ResumeCompactions), where it is what makes a
+	// receipt whose backing archive content or correlated mutation-log
+	// rows went missing/were substituted fail closed instead of
+	// incorrectly committing.
+	CompactionRecoveryVerificationFailures int64
 	// StuckCompactions is the current count of receipts still in phase
 	// "archived" (not yet committed) for this workspace right now — a
 	// non-zero value here means ResumeCompactions has work to do.
@@ -86,6 +95,9 @@ func (s *Store) GetHealth(ctx context.Context, workspaceID string) (*Health, err
 		return nil, err
 	}
 	if h.CompactionRecoveries, err = s.readHealthCounter(ctx, workspaceID, "compaction_recoveries"); err != nil {
+		return nil, err
+	}
+	if h.CompactionRecoveryVerificationFailures, err = s.readHealthCounter(ctx, workspaceID, "compaction_recovery_verification_failures"); err != nil {
 		return nil, err
 	}
 	if err := s.db.QueryRowContext(ctx,

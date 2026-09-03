@@ -67,6 +67,15 @@ func (s *Store) Compact(ctx context.Context, workspaceID string, fencingToken in
 // in phase "archived". current_state itself is not yet touched.
 func (s *Store) archiveCompaction(ctx context.Context, workspaceID string, fencingToken int64, compactionID string, rolled []RolledRecordInput) (*CompactionReceipt, error) {
 	var receipt *CompactionReceipt
+	// verificationFailed is set inside the transaction closure when §4's
+	// set-equality check rejects the rollup, then read after withWriteTx
+	// returns to bump the health counter. bumpHealthCounter must never be
+	// called from inside the closure itself: it issues its own
+	// s.db.ExecContext call, and with this store's single-connection pool
+	// (SetMaxOpenConns(1), §6's single-writer lane) that would try to
+	// check out a second connection while the write transaction's sole
+	// connection is still checked out, deadlocking forever.
+	var verificationFailed bool
 	err := s.withWriteTx(ctx, func(tx execer) error {
 		if err := checkFencing(ctx, tx, workspaceID, fencingToken); err != nil {
 			return err
@@ -131,7 +140,7 @@ func (s *Store) archiveCompaction(ctx context.Context, workspaceID string, fenci
 		// §4 hash-anchored set-equality + disjointness, before anything is
 		// mutated or archived.
 		if err := VerifySetEquality(preIDs, postIDs, rolledIDs); err != nil {
-			s.bumpHealthCounter(ctx, workspaceID, "compaction_verification_failures", 1)
+			verificationFailed = true
 			return err
 		}
 
@@ -245,6 +254,9 @@ func (s *Store) archiveCompaction(ctx context.Context, workspaceID string, fenci
 		}
 		return nil
 	})
+	if verificationFailed {
+		s.bumpHealthCounter(ctx, workspaceID, "compaction_verification_failures", 1)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("durablestate: archiving compaction %q for workspace %q: %w", compactionID, workspaceID, err)
 	}
@@ -255,9 +267,36 @@ func (s *Store) archiveCompaction(ctx context.Context, workspaceID string, fenci
 // rolled record from current_state. Safe to call after a crash: it only
 // ever deletes rows still present (a prior partial run may have already
 // removed some), and never re-touches the archive/mutation log.
+//
+// Before touching current_state at all, it revalidates the receipt
+// against what is actually durable right now: every rolled record's
+// archive row must still exist and hash-check, the receipt's own
+// archive_append byte count/hash/record-id-set must be independently
+// re-derivable from those archive rows, and the mutation log's remove-op
+// entries for this compaction_id must still correlate exactly to the
+// receipt's rolled_records (§1.3/§4/§5). This matters most for the crash
+// recovery path (ResumeCompactions calling this after a restart): a
+// receipt stuck in phase "archived" is otherwise trusted at face value,
+// so archive content that went missing or was substituted, or correlated
+// mutation-log rows that were deleted, between the crash and recovery
+// would silently commit an inconsistent current-state swap. Any
+// verification failure here fails closed: current_state and the receipt's
+// phase are left untouched, never replacing the last verified current
+// state.
 func (s *Store) finishCompactionSwap(ctx context.Context, workspaceID string, fencingToken int64, receipt *CompactionReceipt) error {
-	return s.withWriteTx(ctx, func(tx execer) error {
+	// See archiveCompaction's verificationFailed for why the health-counter
+	// bump must happen after withWriteTx returns, never inside its
+	// closure: bumpHealthCounter issues its own s.db.ExecContext call,
+	// which would try to check out a second connection from this store's
+	// single-connection pool while the write transaction's sole
+	// connection is still checked out, deadlocking forever.
+	var verificationFailed bool
+	err := s.withWriteTx(ctx, func(tx execer) error {
 		if err := checkFencing(ctx, tx, workspaceID, fencingToken); err != nil {
+			return err
+		}
+		if err := verifyArchiveForCompaction(ctx, tx, workspaceID, receipt); err != nil {
+			verificationFailed = true
 			return err
 		}
 		for _, r := range receipt.RolledRecords {
@@ -275,6 +314,10 @@ func (s *Store) finishCompactionSwap(ctx context.Context, workspaceID string, fe
 		}
 		return nil
 	})
+	if verificationFailed {
+		s.bumpHealthCounter(ctx, workspaceID, "compaction_recovery_verification_failures", 1)
+	}
+	return err
 }
 
 // ResumeCompactions finds every receipt for workspaceID stuck in phase
@@ -323,6 +366,79 @@ func (s *Store) ResumeCompactions(ctx context.Context, workspaceID string, fenci
 		resumed = append(resumed, done)
 	}
 	return resumed, nil
+}
+
+// verifyArchiveForCompaction re-derives §3's archive_append hash, byte
+// count, and rolled-record-id-set hash directly from the archive rows
+// currently on disk for receipt.CompactionID -- exactly the way
+// archiveCompaction originally computed them -- and cross-checks the
+// mutation log's remove-op correlation for the same compaction_id. It
+// never trusts the receipt's own recorded values as ground truth for
+// content; those are the very thing under test. A receipt whose Kind is
+// not "rollup" has no archive_append to verify against (it is not this
+// function's contract to process), so it is rejected outright rather than
+// silently accepted.
+func verifyArchiveForCompaction(ctx context.Context, tx execer, workspaceID string, receipt *CompactionReceipt) error {
+	if receipt.Kind != ReceiptRollup {
+		return fmt.Errorf("durablestate: finishCompactionSwap cannot process receipt %q of kind %q (only %q is a rollup step-(d) swap)", receipt.CompactionID, receipt.Kind, ReceiptRollup)
+	}
+
+	expectedIDs := make([]string, 0, len(receipt.RolledRecords))
+	for _, r := range receipt.RolledRecords {
+		expectedIDs = append(expectedIDs, r.RecordID)
+	}
+	sortedIDs := append([]string(nil), expectedIDs...)
+	sort.Strings(sortedIDs)
+
+	appendedForHash := make([]any, 0, len(sortedIDs))
+	for _, recordID := range sortedIDs {
+		var bodyEncoded, bodySHA string
+		err := tx.QueryRowContext(ctx,
+			`SELECT body, sha256 FROM archive WHERE workspace_id = ? AND compaction_id = ? AND record_id = ?`,
+			workspaceID, receipt.CompactionID, recordID,
+		).Scan(&bodyEncoded, &bodySHA)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("durablestate: recovering compaction %q: %w for rolled record %q (fail closed, not applying current-state swap)", receipt.CompactionID, ErrContentRefUnavailable, recordID)
+		}
+		if err != nil {
+			return err
+		}
+		body, err := unmarshalBody(bodyEncoded)
+		if err != nil {
+			return fmt.Errorf("durablestate: recovering compaction %q: archive body for record %q is corrupt: %w", receipt.CompactionID, recordID, err)
+		}
+		recomputed, err := canonicalHash(body)
+		if err != nil {
+			return err
+		}
+		if recomputed != bodySHA {
+			return fmt.Errorf("durablestate: recovering compaction %q: %w for archived record %q (recomputed=%s stored=%s)", receipt.CompactionID, ErrHashMismatch, recordID, recomputed, bodySHA)
+		}
+		appendedForHash = append(appendedForHash, map[string]any{"record_id": recordID, "body": body})
+	}
+
+	appendedBytes, err := canonicalJSONBytes(appendedForHash)
+	if err != nil {
+		return err
+	}
+	if gotByteCount := len(appendedBytes); gotByteCount != receipt.ArchiveAppend.ByteCountAppended {
+		return fmt.Errorf("durablestate: recovering compaction %q: archive byte count mismatch (receipt says %d, archive content is %d bytes); fail closed, not applying current-state swap", receipt.CompactionID, receipt.ArchiveAppend.ByteCountAppended, gotByteCount)
+	}
+	if gotSHA := canonicalHashBytes(appendedBytes); gotSHA != receipt.ArchiveAppend.SHA256OfAppendedBytes {
+		return fmt.Errorf("durablestate: recovering compaction %q: archive content hash %s does not match receipt's recorded archive_append hash %s; fail closed, not applying current-state swap", receipt.CompactionID, gotSHA, receipt.ArchiveAppend.SHA256OfAppendedBytes)
+	}
+	if gotIDSetSHA := recordIDSetSHA256(sortedIDs); gotIDSetSHA != receipt.ArchiveAppend.RolledRecordIDSetSHA256 {
+		return fmt.Errorf("durablestate: recovering compaction %q: rolled record-id-set hash %s does not match receipt's recorded hash %s; fail closed, not applying current-state swap", receipt.CompactionID, gotIDSetSHA, receipt.ArchiveAppend.RolledRecordIDSetSHA256)
+	}
+
+	mutations, err := getMutationsByCompactionID(ctx, tx, workspaceID, receipt.CompactionID)
+	if err != nil {
+		return err
+	}
+	if err := CheckCompactionCorrelation(receipt, mutations); err != nil {
+		return fmt.Errorf("durablestate: recovering compaction %q: %w; fail closed, not applying current-state swap", receipt.CompactionID, err)
+	}
+	return nil
 }
 
 func hashSnapshotContentFlat(state map[string]map[string]any) (int, string, error) {
