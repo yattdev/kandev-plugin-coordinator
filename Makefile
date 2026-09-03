@@ -127,8 +127,12 @@ verify-package-host: package-host
 ## Coordinator policy contract, validator, and own defaults snapshot are all
 ## internally consistent: contract self-validation, plugin-snapshot
 ## validation, overlay narrowing/widening proof, the full vendored test
-## suite, the complete 78-mutation adversarial sweep, and a checksum proof
-## that docs/contracts/upstream/ still matches its recorded manifest. See
+## suite, the complete 78-mutation adversarial sweep, a checksum proof that
+## docs/contracts/upstream/ still matches its recorded manifest (including an
+## independent pinned-source-repository/branch/commit re-check and a
+## symlink/non-regular-file/path-traversal sweep -- see
+## scripts/verify_contract_provenance.py), and the isolated provenance
+## regression tests in scripts/test_verify_contract_provenance.py. See
 ## docs/contracts/README.md for what each step catches.
 verify-contract:
 	python3 docs/contracts/upstream/validate_contract.py contract \
@@ -145,7 +149,9 @@ verify-contract:
 	cd docs/contracts/upstream && python3 -m unittest test_validate_contract -v
 	cd docs/contracts/upstream && python3 adversarial_sweep.py
 	python3 scripts/verify_contract_provenance.py
+	python3 -m unittest discover -s scripts -p "test_*.py" -v
 	find docs/contracts -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+	find scripts -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
 clean:
 	rm -rf bin $(STAGE) kandev-plugin-template-*.tar.gz

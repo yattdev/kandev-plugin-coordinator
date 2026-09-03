@@ -26,8 +26,10 @@ docs/contracts/
     CONTRACT_MAPPING.md
     fixtures/*.json
 scripts/
-  verify_contract_provenance.py   # hermetic (no network) manifest/checksum proof
-  generate_contract_manifest.py   # regenerates the manifest during a refresh
+  contract_pins.py                # independently pinned source_repository/branch/commit constants
+  verify_contract_provenance.py   # hermetic (no network) manifest/checksum/pin proof
+  generate_contract_manifest.py   # regenerates the manifest during a refresh (validated against contract_pins.py)
+  test_verify_contract_provenance.py  # isolated regression tests for the two scripts above
 ```
 
 Nothing under `upstream/` is hand-edited; it is replaced wholesale during a
@@ -74,20 +76,39 @@ order, and fails on the first non-zero exit:
    against an independently recomputed valid digest, so a `stale_digest`
    false-positive can never mask a real invariant gap.
 6. **Hermetic provenance check** — `scripts/verify_contract_provenance.py`
-   proves every file under `upstream/` matches the sha256 recorded in
-   `upstream-manifest.json` at the last deliberate refresh (catches drift or
-   partial re-vendor) and that the manifest's recorded
-   `contract_version`/`digest`/`validator_schema_version` agree with what is
-   actually inside the vendored files.
+   independently re-checks the manifest's `provenance.source_repository`,
+   `source_branch`, and `source_commit` against the hardcoded constants in
+   `scripts/contract_pins.py` (never trusting the manifest's own assertion
+   about itself — missing, malformed, mutable, or substituted values all
+   fail closed); proves every file under `upstream/` is a real regular
+   file (never a symlink or other non-regular file — a symlink whose
+   current target happens to have byte-identical content is still
+   rejected, because its content is not pinned) matching the sha256
+   recorded in `upstream-manifest.json` at the last deliberate refresh
+   (catches drift or partial re-vendor); rejects any manifest-recorded path
+   that attempts to escape `docs/contracts/`; and confirms the manifest's
+   recorded `contract_version`/`digest`/`validator_schema_version` agree
+   with what is actually inside the vendored files.
+7. **Isolated provenance regression tests** —
+   `scripts/test_verify_contract_provenance.py` (run via
+   `python3 -m unittest discover -s scripts -p "test_*.py"`) exercises the
+   above checks and the manifest generator's input validation against
+   throwaway fixture copies: missing/attacker/mutable/substituted source
+   provenance, a symlink standing in for a vendored file, path traversal,
+   an emptied provenance block, and a generator invocation given an
+   arbitrary fork/branch/"main"-as-commit.
 
 `.github/workflows/ci.yml`'s `contract-validation` job runs `make
 verify-contract` on every pull request, plus a separate
 `contract-vendor-provenance` job that checks out the pinned immutable source
 commit (`yattdev/tasks-coordinator` at the exact SHA recorded in
-`PROVENANCE.md`) and diffs it byte-for-byte against `docs/contracts/upstream/`
-— the strongest available proof that the vendored tree is exactly the
-immutable source's `docs/contracts/` at that pin, not merely internally
-self-consistent.
+`PROVENANCE.md`), rejects any symlink present in either the vendored or the
+pinned-source tree, diffs it byte-for-byte (`--no-dereference`, so a symlink
+can never be treated as the file it resolves to) against
+`docs/contracts/upstream/`, and independently cross-checks that the exact
+ref it just checked out matches `scripts/contract_pins.py` — the strongest
+available proof that the vendored tree is exactly the immutable source's
+`docs/contracts/` at that pin, not merely internally self-consistent.
 
 ## Workspace overlays
 
