@@ -108,46 +108,63 @@ func (s *Store) GetHealth(ctx context.Context, workspaceID string) (*Health, err
 
 	now := time.Now().UTC()
 
-	var snapshotCount int
-	var oldestSnap, newestSnap sql.NullString
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM snapshots WHERE workspace_id = ?`, workspaceID,
-	).Scan(&snapshotCount, &oldestSnap, &newestSnap); err != nil {
+	snapshotCount, oldestSnap, newestSnap, hasSnapshots, err := s.timestampBounds(ctx,
+		`SELECT timestamp FROM snapshots WHERE workspace_id = ?`, workspaceID)
+	if err != nil {
 		return nil, err
 	}
 	h.SnapshotCount = snapshotCount
-	if oldestSnap.Valid {
-		if t, err := time.Parse(time.RFC3339Nano, oldestSnap.String); err == nil {
-			h.OldestSnapshotAge = now.Sub(t)
-		}
-	}
-	if newestSnap.Valid {
-		if t, err := time.Parse(time.RFC3339Nano, newestSnap.String); err == nil {
-			h.NewestSnapshotAge = now.Sub(t)
-		}
+	if hasSnapshots {
+		h.OldestSnapshotAge = now.Sub(oldestSnap)
+		h.NewestSnapshotAge = now.Sub(newestSnap)
 	}
 
-	var archiveCount int
-	var oldestArchive, newestArchive sql.NullString
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), MIN(appended_at), MAX(appended_at) FROM archive WHERE workspace_id = ?`, workspaceID,
-	).Scan(&archiveCount, &oldestArchive, &newestArchive); err != nil {
+	archiveCount, oldestArchive, newestArchive, hasArchive, err := s.timestampBounds(ctx,
+		`SELECT appended_at FROM archive WHERE workspace_id = ?`, workspaceID)
+	if err != nil {
 		return nil, err
 	}
 	h.ArchiveRecordCount = archiveCount
-	if oldestArchive.Valid {
-		if t, err := time.Parse(time.RFC3339Nano, oldestArchive.String); err == nil {
-			h.OldestArchiveAge = now.Sub(t)
-		}
-	}
-	if newestArchive.Valid {
-		if t, err := time.Parse(time.RFC3339Nano, newestArchive.String); err == nil {
-			h.NewestArchiveAge = now.Sub(t)
-		}
+	if hasArchive {
+		h.OldestArchiveAge = now.Sub(oldestArchive)
+		h.NewestArchiveAge = now.Sub(newestArchive)
 	}
 
 	if h.CurrentFencingToken, err = s.CurrentFencingToken(ctx, workspaceID); err != nil {
 		return nil, err
 	}
 	return h, nil
+}
+
+// timestampBounds compares parsed instants rather than SQL MIN/MAX over
+// RFC3339Nano text. A whole-second timestamp sorts after a fractional one
+// lexicographically even when it is the earlier instant.
+func (s *Store) timestampBounds(ctx context.Context, query string, args ...any) (count int, oldest, newest time.Time, found bool, err error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return 0, time.Time{}, time.Time{}, false, err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return 0, time.Time{}, time.Time{}, false, err
+		}
+		if !found || parsed.Before(oldest) {
+			oldest = parsed
+		}
+		if !found || parsed.After(newest) {
+			newest = parsed
+		}
+		found = true
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, time.Time{}, time.Time{}, false, err
+	}
+	return count, oldest, newest, found, nil
 }

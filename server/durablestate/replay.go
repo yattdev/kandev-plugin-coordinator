@@ -318,6 +318,10 @@ func (s *Store) Replay(ctx context.Context, workspaceID, snapshotID string, opts
 	if snap == nil {
 		return nil, fmt.Errorf("durablestate: no such snapshot %q for workspace %q", snapshotID, workspaceID)
 	}
+	if err := validateSnapshotAnchors(snap); err != nil {
+		s.bumpHealthCounter(ctx, workspaceID, "replay_failures", 1)
+		return nil, err
+	}
 	state, _ := flattenSnapshotContent(snap.Content)
 
 	var watermark int64

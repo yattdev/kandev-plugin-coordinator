@@ -518,3 +518,19 @@ func TestCompaction_PreservesUnresolvedRecordsAcrossRollup(t *testing.T) {
 	ids := []string{remaining[0].RecordID, remaining[1].RecordID}
 	require.ElementsMatch(t, []string{"rb", "rc"}, ids)
 }
+
+func TestCompaction_RejectsCompactionIDCollidingWithRestoreReceipt(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "compaction-restore-id-collision"
+	token, err := store.AcquireLease(ctx, ws, "leader")
+	require.NoError(t, err)
+	_, err = store.ReactivateRecord(ctx, ws, token, "shared-id", "ra", KindFollowUp, map[string]any{"open": true}, StorageInline)
+	require.NoError(t, err)
+
+	_, err = store.Compact(ctx, ws, token, "shared-id", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.ErrorContains(t, err, "collides with existing receipt kind")
+	_, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found)
+}

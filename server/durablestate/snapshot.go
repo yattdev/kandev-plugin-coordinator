@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -121,6 +123,44 @@ func hashSnapshotContent(content map[string]map[string]map[string]any) (int, str
 	return len(encoded), canonicalHashBytes(encoded), nil
 }
 
+// validateSnapshotAnchors independently re-derives every integrity field
+// carried alongside a full snapshot before replay trusts its content. The
+// stored values are evidence to verify, never substitutes for verification:
+// accepting a body whose byte count/hash (or record count/id set) no longer
+// matches would let corrupted or substituted snapshot content become the
+// starting point for an otherwise hash-verified replay.
+func validateSnapshotAnchors(snap *Snapshot) error {
+	byteCount, sha, err := hashSnapshotContent(snap.Content)
+	if err != nil {
+		return replayErrorf("snapshot %q content cannot be canonically encoded: %v", snap.SnapshotID, err)
+	}
+	if byteCount != snap.ByteCount {
+		return replayErrorf("snapshot %q byte_count mismatch: stored=%d recomputed=%d", snap.SnapshotID, snap.ByteCount, byteCount)
+	}
+	if sha != snap.SHA256 {
+		return replayErrorf("snapshot %q sha256 mismatch: stored=%s recomputed=%s", snap.SnapshotID, snap.SHA256, sha)
+	}
+
+	recordIDs := make([]string, 0, snap.RecordCount)
+	seen := make(map[string]bool, snap.RecordCount)
+	for _, records := range snap.Content {
+		for recordID := range records {
+			if seen[recordID] {
+				return replayErrorf("snapshot %q contains duplicate record_id %q across record kinds", snap.SnapshotID, recordID)
+			}
+			seen[recordID] = true
+			recordIDs = append(recordIDs, recordID)
+		}
+	}
+	if len(recordIDs) != snap.RecordCount {
+		return replayErrorf("snapshot %q record_count mismatch: stored=%d recomputed=%d", snap.SnapshotID, snap.RecordCount, len(recordIDs))
+	}
+	if got := recordIDSetSHA256(recordIDs); got != snap.RecordIDSetSHA256 {
+		return replayErrorf("snapshot %q record_id_set_sha256 mismatch: stored=%s recomputed=%s", snap.SnapshotID, snap.RecordIDSetSHA256, got)
+	}
+	return nil
+}
+
 func insertSnapshot(ctx context.Context, tx execer, snap *Snapshot) error {
 	contentEncoded, err := marshalSnapshotContent(snap.Content)
 	if err != nil {
@@ -227,10 +267,11 @@ func unmarshalSnapshotContent(s string) (map[string]map[string]map[string]any, e
 }
 
 // ListSnapshots returns every retained snapshot for workspaceID ordered by
-// timestamp ascending (oldest first).
+// parsed RFC3339Nano timestamp ascending (oldest first). Raw RFC3339Nano
+// strings are not safely sortable at a whole-second/fractional boundary.
 func (s *Store) ListSnapshots(ctx context.Context, workspaceID string) ([]Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT snapshot_id FROM snapshots WHERE workspace_id = ? ORDER BY timestamp ASC`, workspaceID)
+		`SELECT snapshot_id FROM snapshots WHERE workspace_id = ?`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +297,21 @@ func (s *Store) ListSnapshots(ctx context.Context, workspaceID string) ([]Snapsh
 			out = append(out, *snap)
 		}
 	}
+	parsed := make(map[string]time.Time, len(out))
+	for _, snap := range out {
+		timestamp, err := time.Parse(time.RFC3339Nano, snap.Timestamp)
+		if err != nil {
+			return nil, fmt.Errorf("durablestate: snapshot %q has invalid RFC3339Nano timestamp %q: %w", snap.SnapshotID, snap.Timestamp, err)
+		}
+		parsed[snap.SnapshotID] = timestamp
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti, tj := parsed[out[i].SnapshotID], parsed[out[j].SnapshotID]
+		if ti.Equal(tj) {
+			return out[i].SnapshotID < out[j].SnapshotID
+		}
+		return ti.Before(tj)
+	})
 	return out, nil
 }
 

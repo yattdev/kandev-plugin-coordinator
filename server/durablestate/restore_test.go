@@ -243,3 +243,20 @@ func TestRestore_ArchivedPhaseRetryWithContentRefIgnoresDivergentCallerBody(t *t
 	require.True(t, found)
 	require.Equal(t, original, rec.Body, "archived-phase retry must resolve and apply the content_ref-backed logged body, not the caller's divergent retry body")
 }
+
+func TestRestore_RejectsRestoreIDCollidingWithRollupReceipt(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "restore-rollup-id-collision"
+	token := setupWorkspaceWithRecords(t, store, ws, 1)
+
+	receipt, err := store.Compact(ctx, ws, token, "shared-id", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, ReceiptRollup, receipt.Kind)
+
+	_, err = store.ReactivateRecord(ctx, ws, token, "shared-id", "collision-record", KindEscalation, map[string]any{"open": true}, StorageInline)
+	require.ErrorContains(t, err, "collides with existing receipt kind")
+	_, found, err := store.GetRecord(ctx, ws, "collision-record")
+	require.NoError(t, err)
+	require.False(t, found)
+}

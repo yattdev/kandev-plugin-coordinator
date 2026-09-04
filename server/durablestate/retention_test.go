@@ -196,6 +196,49 @@ func TestRetention_PrunableMutationIDsEmptyWhenNoWatermark(t *testing.T) {
 	require.Empty(t, prunable)
 }
 
+func TestRetention_SnapshotOrderingParsesRFC3339NanoInstants(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "retention-timestamp-order"
+	token, err := store.AcquireLease(ctx, ws, "leader")
+	require.NoError(t, err)
+	older, err := store.CaptureSnapshot(ctx, ws, TriggerScheduledCadence, token)
+	require.NoError(t, err)
+	newer, err := store.CaptureSnapshot(ctx, ws, TriggerScheduledCadence, token)
+	require.NoError(t, err)
+
+	_, err = store.db.ExecContext(ctx,
+		`UPDATE snapshots SET timestamp = ? WHERE workspace_id = ? AND snapshot_id = ?`,
+		"2026-09-03T00:00:00Z", ws, older.SnapshotID)
+	require.NoError(t, err)
+	_, err = store.db.ExecContext(ctx,
+		`UPDATE snapshots SET timestamp = ? WHERE workspace_id = ? AND snapshot_id = ?`,
+		"2026-09-03T00:00:00.000000001Z", ws, newer.SnapshotID)
+	require.NoError(t, err)
+
+	snapshots, err := store.ListSnapshots(ctx, ws)
+	require.NoError(t, err)
+	require.Equal(t, []string{older.SnapshotID, newer.SnapshotID}, []string{snapshots[0].SnapshotID, snapshots[1].SnapshotID})
+	prunable, err := store.PrunableSnapshotIDs(ctx, ws, 1)
+	require.NoError(t, err)
+	require.Equal(t, []string{older.SnapshotID}, prunable)
+
+	health, err := store.GetHealth(ctx, ws)
+	require.NoError(t, err)
+	require.Greater(t, health.OldestSnapshotAge, health.NewestSnapshotAge)
+}
+
+func TestRetention_NegativeSnapshotKeepCountReturnsError(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "negative-retention"
+
+	_, err := store.PrunableSnapshotIDs(ctx, ws, -1)
+	require.ErrorContains(t, err, "must be non-negative")
+	_, err = store.PruneSnapshots(ctx, ws, 0, -1)
+	require.ErrorContains(t, err, "must be non-negative")
+}
+
 func recIDFor(i int) string {
 	return "r" + string(rune('a'+i))
 }

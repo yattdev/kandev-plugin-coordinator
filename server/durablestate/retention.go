@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sort"
 
 	"github.com/google/uuid"
 )
@@ -18,16 +17,18 @@ import (
 // before actually pruning any given one — this only applies the
 // count-based floor.
 func (s *Store) PrunableSnapshotIDs(ctx context.Context, workspaceID string, keepCount int) ([]string, error) {
+	if keepCount < 0 {
+		return nil, fmt.Errorf("durablestate: snapshot keep count must be non-negative, got %d", keepCount)
+	}
 	snaps, err := s.ListSnapshots(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(snaps, func(i, j int) bool { return snaps[i].Timestamp > snaps[j].Timestamp })
 	if keepCount >= len(snaps) {
 		return nil, nil
 	}
 	out := make([]string, 0, len(snaps)-keepCount)
-	for _, s := range snaps[keepCount:] {
+	for _, s := range snaps[:len(snaps)-keepCount] {
 		out = append(out, s.SnapshotID)
 	}
 	return out, nil
@@ -268,6 +269,10 @@ func (s *Store) ReplayFromCheckpoint(ctx context.Context, workspaceID, snapshotI
 		}
 		if snap == nil {
 			return nil, fmt.Errorf("durablestate: no such snapshot %q for workspace %q", snapshotID, workspaceID)
+		}
+		if err := validateSnapshotAnchors(snap); err != nil {
+			s.bumpHealthCounter(ctx, workspaceID, "replay_failures", 1)
+			return nil, err
 		}
 		state, _ = flattenSnapshotContent(snap.Content)
 		if snap.MutationLogWatermark != nil {

@@ -38,6 +38,9 @@ func (s *Store) Compact(ctx context.Context, workspaceID string, fencingToken in
 		return nil, err
 	}
 	if existing != nil {
+		if existing.Kind != ReceiptRollup {
+			return nil, fmt.Errorf("durablestate: compaction_id %q collides with existing receipt kind %q", compactionID, existing.Kind)
+		}
 		switch existing.Phase {
 		case "committed":
 			return existing, nil

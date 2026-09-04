@@ -40,6 +40,45 @@ func putRef(t *testing.T, store *Store, workspaceID string, body map[string]any)
 	return ref
 }
 
+func TestReplay_RejectsSnapshotAnchorMismatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		tamper string
+	}{
+		{
+			name:   "content hash",
+			tamper: `UPDATE snapshots SET content = replace(content, '"n":1', '"n":9') WHERE workspace_id = ? AND snapshot_id = ?`,
+		},
+		{
+			name:   "byte count",
+			tamper: `UPDATE snapshots SET byte_count = byte_count + 1 WHERE workspace_id = ? AND snapshot_id = ?`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestStore(t)
+			ws := "snapshot-anchor-" + tt.name
+			token, err := store.AcquireLease(ctx, ws, "leader")
+			require.NoError(t, err)
+			_, err = store.AppendAdd(ctx, ws, token, "r1", KindDirtyTask, map[string]any{"n": int64(1)}, StorageInline)
+			require.NoError(t, err)
+			snap, err := store.CaptureSnapshot(ctx, ws, TriggerScheduledCadence, token)
+			require.NoError(t, err)
+
+			_, err = store.db.ExecContext(ctx, tt.tamper, ws, snap.SnapshotID)
+			require.NoError(t, err)
+			_, err = store.Replay(ctx, ws, snap.SnapshotID, ReplayOptions{})
+			require.Error(t, err)
+			require.IsType(t, &ReplayError{}, err)
+
+			health, err := store.GetHealth(ctx, ws)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), health.ReplayFailures)
+		})
+	}
+}
+
 func TestReplay_AddUpdateRemoveSequenceReconstructsExpectedState(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)

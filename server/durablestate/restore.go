@@ -36,6 +36,12 @@ func (s *Store) ReactivateRecord(ctx context.Context, workspaceID string, fencin
 		return nil, err
 	}
 	if existing != nil {
+		if existing.Kind != ReceiptRestoreReactivation || existing.RestoreID != restoreID {
+			return nil, fmt.Errorf("durablestate: restore_id %q collides with existing receipt kind %q", restoreID, existing.Kind)
+		}
+		if len(existing.RolledRecords) != 1 || existing.RolledRecords[0].RecordID != recordID || existing.RolledRecords[0].Kind != kind {
+			return nil, fmt.Errorf("durablestate: restore_id %q is already bound to a different reactivation operation", restoreID)
+		}
 		switch existing.Phase {
 		case "committed":
 			return existing, nil
