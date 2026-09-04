@@ -35,6 +35,48 @@ func TestVerifySetEquality_RejectsLostRecord(t *testing.T) {
 	err := VerifySetEquality([]string{"r1", "r2", "r3"}, []string{"r3"}, []string{"r1"})
 	require.Error(t, err)
 	require.IsType(t, &ReplayError{}, err)
+	require.ErrorContains(t, err, "pre_ids does not equal")
+}
+
+func TestVerifySetEquality_RejectsDuplicateIDsWithinEachInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		preIDs    []string
+		postIDs   []string
+		rolledIDs []string
+		want      string
+	}{
+		{
+			name:      "pre ids",
+			preIDs:    []string{"r1", "r1", "r2"},
+			postIDs:   []string{"r2"},
+			rolledIDs: []string{"r1"},
+			want:      `pre_ids contains duplicate record_id "r1"`,
+		},
+		{
+			name:      "post ids",
+			preIDs:    []string{"r1", "r2"},
+			postIDs:   []string{"r2", "r2"},
+			rolledIDs: []string{"r1"},
+			want:      `post_ids contains duplicate record_id "r2"`,
+		},
+		{
+			name:      "rolled ids",
+			preIDs:    []string{"r1", "r2"},
+			postIDs:   []string{"r2"},
+			rolledIDs: []string{"r1", "r1"},
+			want:      `rolled_ids contains duplicate record_id "r1"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := VerifySetEquality(tt.preIDs, tt.postIDs, tt.rolledIDs)
+			require.Error(t, err)
+			require.IsType(t, &ReplayError{}, err)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
 }
 
 func TestVerifySetEquality_RejectsDoubleCountedRecord(t *testing.T) {

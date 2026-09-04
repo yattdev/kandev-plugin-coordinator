@@ -27,9 +27,18 @@ func replayErrorf(format string, args ...any) error {
 // Returns nil on success, a *ReplayError describing exactly which
 // condition failed otherwise.
 func VerifySetEquality(preIDs, postIDs, rolledIDs []string) error {
-	postSet := toSet(postIDs)
-	rolledSet := toSet(rolledIDs)
-	preSet := toSet(preIDs)
+	preSet, err := toUniqueSet("pre_ids", preIDs)
+	if err != nil {
+		return err
+	}
+	postSet, err := toUniqueSet("post_ids", postIDs)
+	if err != nil {
+		return err
+	}
+	rolledSet, err := toUniqueSet("rolled_ids", rolledIDs)
+	if err != nil {
+		return err
+	}
 
 	union := make(map[string]bool, len(postSet)+len(rolledSet))
 	for id := range postSet {
@@ -39,7 +48,7 @@ func VerifySetEquality(preIDs, postIDs, rolledIDs []string) error {
 		union[id] = true
 	}
 	if len(postSet)+len(rolledSet) != len(union) {
-		return replayErrorf("post_ids and rolled_ids are not disjoint: a record_id appears in both (double-counted) or the inputs contain duplicates")
+		return replayErrorf("post_ids and rolled_ids are not disjoint: a record_id appears in both (double-counted)")
 	}
 	if len(preSet) != len(union) || !setsEqual(preSet, union) {
 		missing := setDifference(union, preSet)
@@ -49,12 +58,15 @@ func VerifySetEquality(preIDs, postIDs, rolledIDs []string) error {
 	return nil
 }
 
-func toSet(ids []string) map[string]bool {
+func toUniqueSet(name string, ids []string) (map[string]bool, error) {
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
+		if out[id] {
+			return nil, replayErrorf("%s contains duplicate record_id %q", name, id)
+		}
 		out[id] = true
 	}
-	return out
+	return out, nil
 }
 
 func setsEqual(a, b map[string]bool) bool {
