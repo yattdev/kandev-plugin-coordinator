@@ -249,6 +249,20 @@ func (s *Store) ReplayFromCheckpoint(ctx context.Context, workspaceID, snapshotI
 	if err != nil {
 		return nil, err
 	}
+	if ok {
+		rebuild, err := s.checkpointRequiresBaseReplay(ctx, workspaceID, lastApplied, opts)
+		if err != nil {
+			return nil, err
+		}
+		if rebuild {
+			// A checkpoint only represents state at or after lastApplied. It
+			// cannot be used as the base for an earlier historical target:
+			// doing so would return the checkpoint's newer state without ever
+			// applying (or undoing) anything. Rebuild from the retained full
+			// snapshot and leave the durable checkpoint monotonic.
+			return s.Replay(ctx, workspaceID, snapshotID, opts)
+		}
+	}
 	var state map[string]map[string]any
 	var startAfter int64
 	if ok {
@@ -310,4 +324,31 @@ func (s *Store) ReplayFromCheckpoint(ctx context.Context, workspaceID, snapshotI
 		return nil, err
 	}
 	return final, nil
+}
+
+// checkpointRequiresBaseReplay reports whether opts asks for a point before
+// the already-materialized checkpoint. Mutation-ID targets are directly
+// comparable. Timestamp targets are compared as parsed RFC3339Nano instants
+// against the checkpoint mutation; if that mutation was legitimately pruned,
+// the relationship cannot be proven and replay conservatively rebuilds from
+// the full snapshot instead of trusting a possibly-too-new checkpoint.
+func (s *Store) checkpointRequiresBaseReplay(ctx context.Context, workspaceID string, lastApplied int64, opts ReplayOptions) (bool, error) {
+	if opts.TargetMutationID != nil && *opts.TargetMutationID < lastApplied {
+		return true, nil
+	}
+	if opts.TargetTimestamp == "" {
+		return false, nil
+	}
+	var checkpointTimestamp string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT timestamp FROM mutation_log WHERE workspace_id = ? AND mutation_id = ?`,
+		workspaceID, lastApplied,
+	).Scan(&checkpointTimestamp)
+	if err == sql.ErrNoRows {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return timestampAfter(checkpointTimestamp, opts.TargetTimestamp)
 }

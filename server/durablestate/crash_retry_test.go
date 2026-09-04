@@ -105,3 +105,66 @@ func TestCrashRetry_ReplayFromCheckpointAgainstRealStore(t *testing.T) {
 	require.Equal(t, fullReplay["ra"], final["ra"])
 	_ = m5
 }
+
+func TestCrashRetry_ReusedCheckpointRebuildsForEarlierMutationTarget(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "checkpoint-earlier-mutation"
+	token, err := store.AcquireLease(ctx, ws, "leader")
+	require.NoError(t, err)
+	snap, err := store.CaptureSnapshot(ctx, ws, TriggerScheduledCadence, token)
+	require.NoError(t, err)
+
+	_, err = store.AppendAdd(ctx, ws, token, "r1", KindDirtyTask, map[string]any{"n": int64(1)}, StorageInline)
+	require.NoError(t, err)
+	m2, err := store.AppendUpdate(ctx, ws, token, "r1", map[string]any{"n": int64(2)}, StorageInline)
+	require.NoError(t, err)
+	m3, err := store.AppendUpdate(ctx, ws, token, "r1", map[string]any{"n": int64(3)}, StorageInline)
+	require.NoError(t, err)
+	require.NoError(t, store.SaveReplayCheckpoint(ctx, ws, "ckpt", m3.MutationID))
+
+	state, err := store.ReplayFromCheckpoint(ctx, ws, snap.SnapshotID, "ckpt", ReplayOptions{TargetMutationID: &m2.MutationID})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), state["r1"]["n"])
+	checkpoint, ok, err := store.LoadReplayCheckpoint(ctx, ws, "ckpt")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, m3.MutationID, checkpoint, "historical replay must not move the durable checkpoint backward")
+}
+
+func TestCrashRetry_ReusedCheckpointRebuildsForEarlierTimestampTarget(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "checkpoint-earlier-timestamp"
+	token, err := store.AcquireLease(ctx, ws, "leader")
+	require.NoError(t, err)
+	snap, err := store.CaptureSnapshot(ctx, ws, TriggerScheduledCadence, token)
+	require.NoError(t, err)
+
+	m1, err := store.AppendAdd(ctx, ws, token, "r1", KindDirtyTask, map[string]any{"n": int64(1)}, StorageInline)
+	require.NoError(t, err)
+	m2, err := store.AppendUpdate(ctx, ws, token, "r1", map[string]any{"n": int64(2)}, StorageInline)
+	require.NoError(t, err)
+	m3, err := store.AppendUpdate(ctx, ws, token, "r1", map[string]any{"n": int64(3)}, StorageInline)
+	require.NoError(t, err)
+	timestamps := map[int64]string{
+		m1.MutationID: "2026-09-04T00:00:01Z",
+		m2.MutationID: "2026-09-04T00:00:02Z",
+		m3.MutationID: "2026-09-04T00:00:03Z",
+	}
+	for mutationID, timestamp := range timestamps {
+		_, err := store.db.ExecContext(ctx,
+			`UPDATE mutation_log SET timestamp = ? WHERE workspace_id = ? AND mutation_id = ?`,
+			timestamp, ws, mutationID)
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.SaveReplayCheckpoint(ctx, ws, "ckpt", m3.MutationID))
+
+	state, err := store.ReplayFromCheckpoint(ctx, ws, snap.SnapshotID, "ckpt", ReplayOptions{TargetTimestamp: timestamps[m2.MutationID]})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), state["r1"]["n"])
+	checkpoint, ok, err := store.LoadReplayCheckpoint(ctx, ws, "ckpt")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, m3.MutationID, checkpoint, "historical replay must not move the durable checkpoint backward")
+}
