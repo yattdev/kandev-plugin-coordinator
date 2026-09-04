@@ -50,7 +50,7 @@ func TestCheckCompactionCorrelation_ReceiptMatchesLogRemoveEntries(t *testing.T)
 		{MutationID: 2, WorkspaceID: "w1", Timestamp: "t2", Op: OpRemove, RecordID: "r2", RecordKind: KindFollowUp,
 			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 3},
 	}
-	receipt := &CompactionReceipt{CompactionID: "c-1", RolledRecords: []RolledRecord{{RecordID: "r1"}, {RecordID: "r2"}}}
+	receipt := &CompactionReceipt{CompactionID: "c-1", RolledRecords: []RolledRecord{{RecordID: "r1", MutationID: 1}, {RecordID: "r2", MutationID: 2}}}
 	require.NoError(t, CheckCompactionCorrelation(receipt, log))
 }
 
@@ -61,10 +61,66 @@ func TestCheckCompactionCorrelation_MismatchIsRejected(t *testing.T) {
 			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 3},
 	}
 	// Receipt claims r1 AND r2 were rolled, but the log only shows r1.
-	receipt := &CompactionReceipt{CompactionID: "c-1", RolledRecords: []RolledRecord{{RecordID: "r1"}, {RecordID: "r2"}}}
+	receipt := &CompactionReceipt{CompactionID: "c-1", RolledRecords: []RolledRecord{{RecordID: "r1", MutationID: 1}, {RecordID: "r2", MutationID: 2}}}
 	err := CheckCompactionCorrelation(receipt, log)
 	require.Error(t, err)
 	require.IsType(t, &ReplayError{}, err)
+}
+
+func TestCheckCompactionCorrelation_DuplicateLogRecordIDIsRejected(t *testing.T) {
+	body := map[string]any{"n": float64(1)}
+	log := []Mutation{
+		{MutationID: 2, WorkspaceID: "w1", Timestamp: "t2", Op: OpRemove, RecordID: "r1", RecordKind: KindFollowUp,
+			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 3},
+		{MutationID: 1, WorkspaceID: "w1", Timestamp: "t1", Op: OpRemove, RecordID: "r1", RecordKind: KindFollowUp,
+			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 3},
+	}
+	receipt := &CompactionReceipt{CompactionID: "c-1", RolledRecords: []RolledRecord{{RecordID: "r1", MutationID: 1}}}
+	err := CheckCompactionCorrelation(receipt, log)
+	require.Error(t, err)
+	require.IsType(t, &ReplayError{}, err)
+	require.Contains(t, err.Error(), "duplicate remove mutation entries")
+}
+
+func TestCheckCompactionCorrelation_ExtraLogRecordIsRejected(t *testing.T) {
+	body := map[string]any{"n": float64(1)}
+	log := []Mutation{
+		{MutationID: 1, WorkspaceID: "w1", Timestamp: "t1", Op: OpRemove, RecordID: "r1", RecordKind: KindFollowUp,
+			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 3},
+		{MutationID: 2, WorkspaceID: "w1", Timestamp: "t2", Op: OpRemove, RecordID: "r2", RecordKind: KindFollowUp,
+			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 3},
+	}
+	receipt := &CompactionReceipt{CompactionID: "c-1", RolledRecords: []RolledRecord{{RecordID: "r1", MutationID: 1}}}
+	err := CheckCompactionCorrelation(receipt, log)
+	require.Error(t, err)
+	require.IsType(t, &ReplayError{}, err)
+	require.Contains(t, err.Error(), "extra=[r2]")
+}
+
+func TestCheckCompactionCorrelation_MutationIDMismatchIsRejected(t *testing.T) {
+	body := map[string]any{"n": float64(1)}
+	log := []Mutation{
+		{MutationID: 2, WorkspaceID: "w1", Timestamp: "t2", Op: OpRemove, RecordID: "r1", RecordKind: KindFollowUp,
+			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 3},
+	}
+	receipt := &CompactionReceipt{CompactionID: "c-1", RolledRecords: []RolledRecord{{RecordID: "r1", MutationID: 1}}}
+	err := CheckCompactionCorrelation(receipt, log)
+	require.Error(t, err)
+	require.IsType(t, &ReplayError{}, err)
+	require.Contains(t, err.Error(), "declares mutation_id 1")
+}
+
+func TestCheckCompactionCorrelation_DuplicateReceiptRecordIDIsRejected(t *testing.T) {
+	body := map[string]any{"n": float64(1)}
+	log := []Mutation{
+		{MutationID: 1, WorkspaceID: "w1", Timestamp: "t1", Op: OpRemove, RecordID: "r1", RecordKind: KindFollowUp,
+			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 3},
+	}
+	receipt := &CompactionReceipt{CompactionID: "c-1", RolledRecords: []RolledRecord{{RecordID: "r1", MutationID: 1}, {RecordID: "r1", MutationID: 2}}}
+	err := CheckCompactionCorrelation(receipt, log)
+	require.Error(t, err)
+	require.IsType(t, &ReplayError{}, err)
+	require.Contains(t, err.Error(), "duplicate rolled record_id")
 }
 
 // TestReplayCompactionReceiptCorrelation exercises replay()'s own
@@ -95,7 +151,7 @@ func TestReplay_NonexistentCompactionIDIsRejected(t *testing.T) {
 		{MutationID: 1, WorkspaceID: ws, Timestamp: "t1", Op: OpRemove, RecordID: "r1", RecordKind: KindFollowUp,
 			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 1},
 	}
-	other := &CompactionReceipt{CompactionID: "c-999", WorkspaceID: ws, RolledRecords: []RolledRecord{{RecordID: "r1"}}, Phase: "committed"}
+	other := &CompactionReceipt{CompactionID: "c-999", WorkspaceID: ws, RolledRecords: []RolledRecord{{RecordID: "r1", MutationID: 1}}, Phase: "committed"}
 	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error { return insertCompactionReceipt(ctx, tx, other) }))
 	_, err := store.replayMutations(ctx, ws, map[string]map[string]any{"r1": body}, log, ReplayOptions{})
 	require.Error(t, err)
@@ -110,7 +166,7 @@ func TestReplay_SubstitutedMismatchedReceiptIsRejected(t *testing.T) {
 		{MutationID: 1, WorkspaceID: ws, Timestamp: "t1", Op: OpRemove, RecordID: "r1", RecordKind: KindFollowUp,
 			Before: mkInlineSide(t, body), CompactionID: "c-1", FencingToken: 1},
 	}
-	mismatched := &CompactionReceipt{CompactionID: "c-1", WorkspaceID: ws, RolledRecords: []RolledRecord{{RecordID: "some-other-record"}}, Phase: "committed"}
+	mismatched := &CompactionReceipt{CompactionID: "c-1", WorkspaceID: ws, RolledRecords: []RolledRecord{{RecordID: "some-other-record", MutationID: 1}}, Phase: "committed"}
 	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error { return insertCompactionReceipt(ctx, tx, mismatched) }))
 	_, err := store.replayMutations(ctx, ws, map[string]map[string]any{"r1": body}, log, ReplayOptions{})
 	require.Error(t, err)
@@ -130,7 +186,7 @@ func TestReplay_CorrelatedRemovalSucceedsAndPreservesOrderChecks(t *testing.T) {
 		{MutationID: 1, WorkspaceID: ws, Timestamp: "t1", Op: OpRemove, RecordID: "r2", RecordKind: KindFollowUp,
 			Before: mkInlineSide(t, bodyV1), CompactionID: "c-1", FencingToken: 1},
 	}
-	receipt := &CompactionReceipt{CompactionID: "c-1", WorkspaceID: ws, RolledRecords: []RolledRecord{{RecordID: "r2"}}, Phase: "committed"}
+	receipt := &CompactionReceipt{CompactionID: "c-1", WorkspaceID: ws, RolledRecords: []RolledRecord{{RecordID: "r2", MutationID: 1}}, Phase: "committed"}
 	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error { return insertCompactionReceipt(ctx, tx, receipt) }))
 
 	state, err := store.replayMutations(ctx, ws, map[string]map[string]any{"r1": bodyV1, "r2": bodyV1}, log, ReplayOptions{})

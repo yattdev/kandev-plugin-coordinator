@@ -86,17 +86,17 @@ func listMutations(ctx context.Context, tx execer, workspaceID string) ([]Mutati
 }
 
 // getMutationsByCompactionID returns every mutation-log entry tagged with
-// compactionID, in no particular order. Used to revalidate a compaction
-// receipt's rolled_records against what the mutation log still durably
-// shows for that compaction_id (§1.3/§4), rather than trusting the
-// receipt's own recorded correlation.
+// compactionID, ordered by mutation_id for deterministic diagnostics. Used
+// to revalidate a compaction receipt's rolled_records against what the
+// mutation log still durably shows for that compaction_id (§1.3/§4),
+// rather than trusting the receipt's own recorded correlation.
 func getMutationsByCompactionID(ctx context.Context, tx execer, workspaceID, compactionID string) ([]Mutation, error) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT mutation_id, timestamp, op, record_id, record_kind,
 			before_storage, before_sha256, before_body, before_ref,
 			after_storage, after_sha256, after_body, after_ref,
 			compaction_id, restore_id, fencing_token
-		 FROM mutation_log WHERE workspace_id = ? AND compaction_id = ?`,
+		 FROM mutation_log WHERE workspace_id = ? AND compaction_id = ? ORDER BY mutation_id`,
 		workspaceID, compactionID)
 	if err != nil {
 		return nil, err

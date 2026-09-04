@@ -61,7 +61,7 @@ func TestReplay_AddUpdateRemoveSequenceReconstructsExpectedState(t *testing.T) {
 		WorkspaceID:   ws,
 		Kind:          ReceiptRollup,
 		Phase:         "committed",
-		RolledRecords: []RolledRecord{{RecordID: "f1"}},
+		RolledRecords: []RolledRecord{{RecordID: "f1", MutationID: 3}},
 	}
 	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error {
 		return insertCompactionReceipt(ctx, tx, receipt)

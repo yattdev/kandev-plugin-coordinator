@@ -120,20 +120,84 @@ func timestampAfter(a, b string) (bool, error) {
 // RolledRecords must be exactly the remove-op mutation-log entries
 // carrying the matching CompactionID.
 func CheckCompactionCorrelation(receipt *CompactionReceipt, mutationLog []Mutation) error {
-	logRemovedIDs := make(map[string]bool)
+	receiptByRecordID := make(map[string]RolledRecord, len(receipt.RolledRecords))
+	receiptMutationIDs := make(map[int64]string, len(receipt.RolledRecords))
 	for _, m := range mutationLog {
-		if m.Op == OpRemove && m.CompactionID == receipt.CompactionID {
-			logRemovedIDs[m.RecordID] = true
+		if m.CompactionID != receipt.CompactionID {
+			continue
+		}
+		if m.Op != OpRemove {
+			return replayErrorf(
+				"mutation_id %d for record_id %q carries compaction_id %q with op %q; only remove mutations may be correlated to a compaction receipt",
+				m.MutationID, m.RecordID, receipt.CompactionID, m.Op,
+			)
 		}
 	}
-	receiptIDs := make(map[string]bool, len(receipt.RolledRecords))
 	for _, r := range receipt.RolledRecords {
-		receiptIDs[r.RecordID] = true
+		if existing, ok := receiptByRecordID[r.RecordID]; ok {
+			return replayErrorf(
+				"compaction receipt %q has duplicate rolled record_id %q (mutation_ids %d and %d); correlation is ambiguous",
+				receipt.CompactionID, r.RecordID, existing.MutationID, r.MutationID,
+			)
+		}
+		if r.MutationID == 0 {
+			return replayErrorf("compaction receipt %q rolled record_id %q is missing its mutation_id", receipt.CompactionID, r.RecordID)
+		}
+		if existingRecordID, ok := receiptMutationIDs[r.MutationID]; ok {
+			return replayErrorf(
+				"compaction receipt %q has duplicate rolled mutation_id %d for record_ids %q and %q; correlation is ambiguous",
+				receipt.CompactionID, r.MutationID, existingRecordID, r.RecordID,
+			)
+		}
+		receiptByRecordID[r.RecordID] = r
+		receiptMutationIDs[r.MutationID] = r.RecordID
 	}
-	if !setsEqual(logRemovedIDs, receiptIDs) {
+
+	logByRecordID := make(map[string]Mutation)
+	logMutationIDs := make(map[int64]string)
+	var extra, missing []string
+	for _, m := range mutationLog {
+		if m.CompactionID != receipt.CompactionID {
+			continue
+		}
+		if existing, ok := logByRecordID[m.RecordID]; ok {
+			return replayErrorf(
+				"compaction_id %q has duplicate remove mutation entries for record_id %q (mutation_ids %d and %d); correlation is ambiguous",
+				receipt.CompactionID, m.RecordID, existing.MutationID, m.MutationID,
+			)
+		}
+		if existingRecordID, ok := logMutationIDs[m.MutationID]; ok {
+			return replayErrorf(
+				"compaction_id %q has duplicate remove mutation_id %d for record_ids %q and %q; replay order is ambiguous",
+				receipt.CompactionID, m.MutationID, existingRecordID, m.RecordID,
+			)
+		}
+		if _, ok := receiptByRecordID[m.RecordID]; !ok {
+			extra = append(extra, m.RecordID)
+			continue
+		}
+		logByRecordID[m.RecordID] = m
+		logMutationIDs[m.MutationID] = m.RecordID
+	}
+	for _, r := range receipt.RolledRecords {
+		m, ok := logByRecordID[r.RecordID]
+		if !ok {
+			missing = append(missing, r.RecordID)
+			continue
+		}
+		if m.MutationID != r.MutationID {
+			return replayErrorf(
+				"compaction receipt %q rolled record_id %q declares mutation_id %d, but the correlated remove mutation has mutation_id %d",
+				receipt.CompactionID, r.RecordID, r.MutationID, m.MutationID,
+			)
+		}
+	}
+	if len(extra) > 0 || len(missing) > 0 {
+		sort.Strings(extra)
+		sort.Strings(missing)
 		return replayErrorf(
-			"compaction receipt rolled_records does not match mutation-log remove entries for compaction_id %q: receipt=%v log=%v",
-			receipt.CompactionID, sortedSlice(receiptIDs), sortedSlice(logRemovedIDs),
+			"compaction receipt rolled_records does not exactly match mutation-log remove entries for compaction_id %q: missing=%v extra=%v",
+			receipt.CompactionID, missing, extra,
 		)
 	}
 	return nil

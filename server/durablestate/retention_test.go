@@ -19,7 +19,7 @@ func TestVerifySetEquality_FullReplayThenSetEqualityMatchesReceipt(t *testing.T)
 		{MutationID: 11, WorkspaceID: ws, Timestamp: "t11", Op: OpRemove, RecordID: "r2", RecordKind: KindFollowUp,
 			Before: mkInlineSide(t, r2), CompactionID: "c-9", FencingToken: 5},
 	}
-	receipt := &CompactionReceipt{CompactionID: "c-9", WorkspaceID: ws, RolledRecords: []RolledRecord{{RecordID: "r1"}, {RecordID: "r2"}}, Phase: "committed"}
+	receipt := &CompactionReceipt{CompactionID: "c-9", WorkspaceID: ws, RolledRecords: []RolledRecord{{RecordID: "r1", MutationID: 10}, {RecordID: "r2", MutationID: 11}}, Phase: "committed"}
 	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error { return insertCompactionReceipt(ctx, tx, receipt) }))
 
 	postState, err := store.replayMutations(ctx, ws, preState, log, ReplayOptions{})

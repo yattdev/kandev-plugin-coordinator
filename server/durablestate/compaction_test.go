@@ -2,6 +2,7 @@ package durablestate
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -238,6 +239,158 @@ func TestCompaction_RecoveryFailsClosedWhenCorrelatedMutationSubstituted(t *test
 	stillArchived, err := store.getCompactionReceipt(ctx, ws, "compaction-substituted")
 	require.NoError(t, err)
 	require.Equal(t, "archived", stillArchived.Phase, "the receipt must not be committed when its mutation linkage failed revalidation")
+}
+
+func TestCompaction_RecoveryFailsClosedWhenCorrelatedMutationDuplicated(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	token := setupWorkspaceWithRecords(t, store, ws, 3)
+
+	receipt, err := store.archiveCompaction(ctx, ws, token, "compaction-duplicate-mutation", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, "archived", receipt.Phase)
+
+	var archiveSHA string
+	require.NoError(t, store.db.QueryRowContext(ctx,
+		`SELECT sha256 FROM archive WHERE workspace_id = ? AND compaction_id = ? AND record_id = ?`,
+		ws, "compaction-duplicate-mutation", "ra",
+	).Scan(&archiveSHA))
+
+	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error {
+		mutationID, err := nextMutationID(ctx, tx, ws)
+		if err != nil {
+			return err
+		}
+		return writeMutationRow(ctx, tx, Mutation{
+			MutationID:   mutationID,
+			WorkspaceID:  ws,
+			Timestamp:    nowUTC(),
+			Op:           OpRemove,
+			RecordID:     "ra",
+			RecordKind:   KindFollowUp,
+			Before:       &PayloadSide{Storage: StorageContentRef, SHA256: archiveSHA, Ref: "archive:compaction-duplicate-mutation:ra"},
+			CompactionID: "compaction-duplicate-mutation",
+			FencingToken: token,
+		})
+	}))
+
+	_, err = store.ResumeCompactions(ctx, ws, token)
+	require.Error(t, err, "recovery must reject duplicate remove rows for one rolled record")
+
+	_, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found, "current_state must not be mutated when duplicate mutation correlation fails")
+}
+
+func TestCompaction_RecoveryFailsClosedWhenCorrelatedMutationExtra(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	token := setupWorkspaceWithRecords(t, store, ws, 3)
+
+	receipt, err := store.archiveCompaction(ctx, ws, token, "compaction-extra-mutation", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, "archived", receipt.Phase)
+
+	var archiveSHA string
+	require.NoError(t, store.db.QueryRowContext(ctx,
+		`SELECT sha256 FROM archive WHERE workspace_id = ? AND compaction_id = ? AND record_id = ?`,
+		ws, "compaction-extra-mutation", "ra",
+	).Scan(&archiveSHA))
+
+	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error {
+		mutationID, err := nextMutationID(ctx, tx, ws)
+		if err != nil {
+			return err
+		}
+		return writeMutationRow(ctx, tx, Mutation{
+			MutationID:   mutationID,
+			WorkspaceID:  ws,
+			Timestamp:    nowUTC(),
+			Op:           OpRemove,
+			RecordID:     "rb",
+			RecordKind:   KindFollowUp,
+			Before:       &PayloadSide{Storage: StorageContentRef, SHA256: archiveSHA, Ref: "archive:compaction-extra-mutation:ra"},
+			CompactionID: "compaction-extra-mutation",
+			FencingToken: token,
+		})
+	}))
+
+	_, err = store.ResumeCompactions(ctx, ws, token)
+	require.Error(t, err, "recovery must reject extra remove rows not named by rolled_records")
+
+	_, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found, "current_state must not be mutated when extra mutation correlation fails")
+}
+
+func TestCompaction_RecoveryFailsClosedWhenReceiptMutationIDSubstituted(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	token := setupWorkspaceWithRecords(t, store, ws, 3)
+
+	receipt, err := store.archiveCompaction(ctx, ws, token, "compaction-mutid-substituted", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	require.Equal(t, "archived", receipt.Phase)
+
+	tamperedRolled := append([]RolledRecord(nil), receipt.RolledRecords...)
+	tamperedRolled[0].MutationID += 100
+	encoded, err := json.Marshal(tamperedRolled)
+	require.NoError(t, err)
+	res, err := store.db.ExecContext(ctx,
+		`UPDATE compaction_receipts SET rolled_records = ? WHERE workspace_id = ? AND compaction_id = ?`,
+		string(encoded), ws, "compaction-mutid-substituted")
+	require.NoError(t, err)
+	affected, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected)
+
+	_, err = store.ResumeCompactions(ctx, ws, token)
+	require.Error(t, err, "recovery must reject a receipt whose rolled_records mutation_id no longer matches the durable remove row")
+
+	_, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found, "current_state must not be mutated when receipt mutation_id correlation fails")
+}
+
+func TestCompaction_MutationsByCompactionIDAreDeterministicallyOrdered(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "w1"
+	body := map[string]any{"n": float64(1)}
+
+	require.NoError(t, store.withWriteTx(ctx, func(tx execer) error {
+		if err := writeMutationRow(ctx, tx, Mutation{
+			MutationID:   20,
+			WorkspaceID:  ws,
+			Timestamp:    nowUTC(),
+			Op:           OpRemove,
+			RecordID:     "r20",
+			RecordKind:   KindFollowUp,
+			Before:       mkInlineSide(t, body),
+			CompactionID: "c-order",
+			FencingToken: 1,
+		}); err != nil {
+			return err
+		}
+		return writeMutationRow(ctx, tx, Mutation{
+			MutationID:   10,
+			WorkspaceID:  ws,
+			Timestamp:    nowUTC(),
+			Op:           OpRemove,
+			RecordID:     "r10",
+			RecordKind:   KindFollowUp,
+			Before:       mkInlineSide(t, body),
+			CompactionID: "c-order",
+			FencingToken: 1,
+		})
+	}))
+
+	mutations, err := getMutationsByCompactionID(ctx, store.db, ws, "c-order")
+	require.NoError(t, err)
+	require.Equal(t, []int64{10, 20}, []int64{mutations[0].MutationID, mutations[1].MutationID})
 }
 
 // TestCompaction_RecoveryFailsClosedWhenArchiveBodyTampered simulates the
