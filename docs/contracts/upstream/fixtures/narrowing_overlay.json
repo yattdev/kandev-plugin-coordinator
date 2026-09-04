@@ -1,0 +1,16 @@
+{
+  "overlay_id": "example-workspace-overlay-safe",
+  "base_contract_version": "1.1.0",
+  "narrows": {
+    "cross_workspace_authority": false,
+    "coordinator_decidable_examples": [
+      "task_owned_edits",
+      "commits"
+    ],
+    "human_reserved_classes": [
+      "destructive_or_irreversible",
+      "security_or_trust_boundary",
+      "workspace_specific_extra_caution_class"
+    ]
+  }
+}

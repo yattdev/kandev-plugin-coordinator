@@ -97,3 +97,92 @@ jobs:
       - name: Test provider-free generated backend
         working-directory: plugin
         run: go test ./server/...
+
+  contract-validation:
+    name: Coordinator policy contract — vendored validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      # Hermetic (no network, stdlib-only): contract self-validation,
+      # plugin-snapshot validation, overlay narrowing/widening proof, the
+      # full vendored test suite, the 78/78 adversarial sweep, and the
+      # manifest checksum proof. See docs/contracts/README.md.
+      - name: make verify-contract
+        run: make verify-contract
+
+  contract-vendor-provenance:
+    name: Coordinator policy contract — vendored tree matches pinned source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          path: plugin
+
+      # Pinned to the exact immutable source SHA recorded in
+      # docs/contracts/PROVENANCE.md. Bump only as part of the deterministic
+      # refresh procedure documented there — never to "latest".
+      - name: Check out pinned immutable contract source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: yattdev/tasks-coordinator
+          path: tasks-coordinator
+          ref: 2ca27d00477dc298fc91187274968f1fc3970fef
+          sparse-checkout: docs/contracts
+
+      # A symlink standing in for a vendored file could have byte-identical
+      # content today (satisfying a naive diff) while pointing at a target
+      # that is not part of this checkout and can change later without this
+      # job ever running again. Reject any symlink anywhere in the vendored
+      # tree, on both sides, before trusting the diff below. This mirrors
+      # scripts/verify_contract_provenance.py's local symlink guard.
+      - name: Reject symlinks in vendored/pinned trees
+        run: |
+          plugin_symlinks="$(find plugin/docs/contracts/upstream -type l)"
+          source_symlinks="$(find tasks-coordinator/docs/contracts -type l)"
+          if [ -n "$plugin_symlinks" ]; then
+            echo "Symlinks are not allowed in the vendored tree:"
+            echo "$plugin_symlinks"
+            exit 1
+          fi
+          if [ -n "$source_symlinks" ]; then
+            echo "Symlinks are not allowed in the pinned immutable source tree:"
+            echo "$source_symlinks"
+            exit 1
+          fi
+
+      # --no-dereference: compare symlinks as symlinks (never as whatever
+      # they resolve to). Combined with the symlink rejection above, this
+      # closes the case where a symlink slips past a first check but a later
+      # refactor re-introduces one here.
+      - name: Diff vendored tree against pinned source (byte-for-byte)
+        run: |
+          diff -rq --no-dereference tasks-coordinator/docs/contracts/coordinator-policy-contract.json plugin/docs/contracts/upstream/coordinator-policy-contract.json
+          diff -rq --no-dereference tasks-coordinator/docs/contracts/validate_contract.py plugin/docs/contracts/upstream/validate_contract.py
+          diff -rq --no-dereference tasks-coordinator/docs/contracts/adversarial_sweep.py plugin/docs/contracts/upstream/adversarial_sweep.py
+          diff -rq --no-dereference tasks-coordinator/docs/contracts/test_validate_contract.py plugin/docs/contracts/upstream/test_validate_contract.py
+          diff -rq --no-dereference tasks-coordinator/docs/contracts/CONTRACT_MAPPING.md plugin/docs/contracts/upstream/CONTRACT_MAPPING.md
+          diff -rq --no-dereference tasks-coordinator/docs/contracts/fixtures plugin/docs/contracts/upstream/fixtures
+          echo "Vendored docs/contracts/upstream/ is byte-identical to yattdev/tasks-coordinator@2ca27d00477dc298fc91187274968f1fc3970fef."
+
+      # Independent, hermetic re-check that the exact source_repository /
+      # source_branch / source_commit this job just checked out are the same
+      # ones scripts/verify_contract_provenance.py independently pins in
+      # scripts/contract_pins.py -- catches a workflow file edited to point
+      # the checkout above at a different ref without updating the pin (or
+      # vice versa).
+      - name: Cross-check pinned ref against scripts/contract_pins.py
+        working-directory: plugin
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          import contract_pins as pins
+          expected_ref = "2ca27d00477dc298fc91187274968f1fc3970fef"
+          assert pins.EXPECTED_SOURCE_REPOSITORY == "yattdev/tasks-coordinator", pins.EXPECTED_SOURCE_REPOSITORY
+          assert pins.EXPECTED_SOURCE_BRANCH == "feature/codify-coordinator-p-8eu", pins.EXPECTED_SOURCE_BRANCH
+          assert pins.EXPECTED_SOURCE_COMMIT == expected_ref, pins.EXPECTED_SOURCE_COMMIT
+          print("OK: workflow-pinned ref matches scripts/contract_pins.py.")
+          PY

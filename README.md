@@ -227,6 +227,14 @@ recipes/source-control/
   manifest.fragment.yaml
   server/              # provider-neutral backend ports and contract tests
   ui/                  # typed native registrations and lifecycle tests
+docs/contracts/
+  upstream/            # exact, unmodified vendor copy of the Coordinator
+                       # policy contract + its standalone validator (see
+                       # docs/contracts/README.md)
+  plugin-snapshot.json # this plugin's own machine-readable defaults dump
+scripts/
+  verify_contract_provenance.py  # hermetic vendored-file checksum proof
+  generate_contract_manifest.py  # regenerates the manifest during a refresh
 package.json           # recipe-only TypeScript tests/types; no production bundle
 tsconfig.recipes.json  # strict public-SDK contract check
 ```
@@ -246,6 +254,7 @@ make build               # go build -o bin/... ./server/...
 make test                # base + recipe Go/TypeScript tests
 make vet                 # base + recipe Go vet
 make verify-package-host # validate a host-only tarball and checksums
+make verify-contract     # vendored Coordinator policy contract validation (see docs/contracts/README.md)
 ```
 
 > Note: bare `go build ./server/...` (no `-o`) fails with `build output
@@ -253,6 +262,18 @@ make verify-package-host # validate a host-only tarball and checksums
 > lone main package is the last path element ("server"), which collides with
 > the `server/` source directory. Always pass `-o`, run `go build .` from
 > inside `server/`, or use `make build`. `go vet`/`go test` are unaffected.
+
+## Coordinator policy contract
+
+This plugin vendors the Coordinator policy contract and its standalone
+validator verbatim from `yattdev/tasks-coordinator` (an exact, pinned SHA —
+never "latest") and validates this plugin's own defaults snapshot against it
+in CI, so the plugin fails closed instead of silently drifting from the
+contract's authority boundaries, gates, queue/receipt identity, and Done
+terminal-integrity invariants. See [`docs/contracts/README.md`](docs/contracts/README.md)
+for what is enforced and [`docs/contracts/PROVENANCE.md`](docs/contracts/PROVENANCE.md)
+for the exact source pin and refresh procedure. Run `make verify-contract`
+to check it locally.
 
 ## Package it
 
@@ -297,7 +318,8 @@ Reinstalling the same version returns 409 — bump `version` in `manifest.yaml`.
 
 ## Publish a release
 
-Pull requests run `.github/workflows/ci.yml` (tidy, format, vet, and test) and
+Pull requests run `.github/workflows/ci.yml` (tidy, format, vet, test, and
+the vendored Coordinator policy contract validation/provenance jobs) and
 `.github/workflows/build.yml` (host build plus a five-platform package). Push a
 tag that matches the manifest version to run `.github/workflows/release.yml`:
 it repeats verification, cross-compiles all platforms, packs the tarball, and

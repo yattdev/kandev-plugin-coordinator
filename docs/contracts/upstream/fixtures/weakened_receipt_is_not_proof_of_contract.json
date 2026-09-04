@@ -1,0 +1,208 @@
+{
+  "contract_id": "coordinator-policy-contract",
+  "contract_version": "1.1.0",
+  "source_charter_effective_version": "2026-09-03a",
+  "source_decision_anchor": "docs/DECISIONS.md#coordinator-policy-is-contract-validated-not-hand-copied-2026-09-03-human-directed",
+  "generated_at": "2026-09-03",
+  "digest_algorithm": "sha256",
+  "digest": "ea9ec1d2248170513842b63d66e3699c8312bc2549a4d7f14048793b4cfed2df",
+  "compatibility": {
+    "min_supported_contract_version": "1.1.0",
+    "max_known_contract_version": "1.1.0",
+    "unsupported_version_behavior": "fail_closed"
+  },
+  "required_fields": [
+    "contract_id",
+    "contract_version",
+    "source_charter_effective_version",
+    "source_decision_anchor",
+    "generated_at",
+    "digest_algorithm",
+    "digest",
+    "compatibility",
+    "required_fields",
+    "authority_boundaries",
+    "workspace_lane_ownership",
+    "queue_claim_identity",
+    "worker_helper_receipts",
+    "gates",
+    "readiness_notification_order",
+    "escalation_classes",
+    "done_integrity",
+    "exclusions"
+  ],
+  "authority_boundaries": {
+    "approval_principal": "coordinator",
+    "scope": "same_workspace_only",
+    "cross_workspace_authority": false,
+    "coordinator_decidable_examples": [
+      "task_owned_edits",
+      "tests_and_diagnostics",
+      "commits",
+      "normal_nonrewriting_pushes",
+      "pr_mr_creation_or_update",
+      "qualified_draft_to_ready",
+      "additive_nonrewriting_branch_reconciliation",
+      "reversible_board_moves",
+      "ci_review_remediation",
+      "ordinary_provider_operations",
+      "bounded_retries_after_cause_understood"
+    ],
+    "human_reserved_classes": [
+      "destructive_or_irreversible",
+      "security_or_trust_boundary"
+    ]
+  },
+  "workspace_lane_ownership": {
+    "unit": "workspace",
+    "peer_model": true,
+    "cross_workspace_standing": false,
+    "monitored_lanes": [
+      "spec",
+      "work",
+      "review",
+      "qa",
+      "pr",
+      "ci_fixup",
+      "done"
+    ],
+    "done_is_terminal_integrity_lane": true,
+    "auto_start_lane_move_requires_settled_lifecycle": true
+  },
+  "queue_claim_identity": {
+    "identity_scope": "per_entry",
+    "minimum_trusted_envelope": [
+      "entry_id",
+      "workspace_id",
+      "task_id",
+      "session_id",
+      "created_timestamp",
+      "kind",
+      "payload_digest",
+      "routine_identity_when_applicable"
+    ],
+    "audit_model": "exact_entry_never_global_watermark",
+    "coalescing_rule": "only_identity_equivalent_pending_routine_wakes_for_same_target",
+    "routine_identity_components": [
+      "workspace_id",
+      "routine_type_or_name",
+      "policy_or_prompt_version_generation",
+      "semantic_scope_generation"
+    ],
+    "routine_identity_excludes_sender_ids": true,
+    "cross_sender_coalescing_permitted": true,
+    "coalescing_preserved_state": "single_pending_successor_or_freshness_bit",
+    "coalescing_forbidden_for": [
+      "human_input",
+      "task_reports",
+      "peer_reports",
+      "distinct_payloads"
+    ],
+    "claim_collision_check": "deterministic_claim_set"
+  },
+  "worker_helper_receipts": {
+    "workers_never_mutate": true,
+    "mutation_serialized_by": "single_writer_lane",
+    "receipt_required_fields": [
+      "source_task_or_queue_row_identity",
+      "claim_or_lease_id",
+      "outcome",
+      "timestamp"
+    ],
+    "receipt_is_not_proof_of": [
+      "queue_row_claimed",
+      "queue_row_acknowledged",
+      "queue_row_removed"
+    ],
+    "routine_wake_coalescing_receipt_fields": [
+      "canonical_entry_id",
+      "absorbed_source_entry_ids",
+      "absorbed_source_entry_count",
+      "absorbed_source_entry_timestamps_without_bodies",
+      "leader_fencing_token",
+      "dirty_generation",
+      "post_run_requeue_required"
+    ],
+    "freshness_barrier_required_before_reporting": true
+  },
+  "gates": {
+    "review": {
+      "exact_head_required": true,
+      "independent_session_required": true
+    },
+    "qa": {
+      "exact_head_required": true,
+      "independent_session_required": true
+    },
+    "readiness": {
+      "exact_head_required": true,
+      "recheck_after_draft_to_ready_transition": true
+    },
+    "done_integrity": {
+      "exact_head_required": true,
+      "terminal_receipt_required": true
+    }
+  },
+  "readiness_notification_order": [
+    "provider_confirmed_ready_nondraft",
+    "refreshed_post_ready_gates",
+    "reviewer_notification"
+  ],
+  "escalation_classes": {
+    "human_reserved": [
+      {
+        "class": "destructive_or_irreversible",
+        "includes": [
+          "deletion",
+          "reset_clean_discard",
+          "data_or_container_removal",
+          "force_push",
+          "rebase_squash_amend_of_published_history"
+        ]
+      },
+      {
+        "class": "security_or_trust_boundary",
+        "includes": [
+          "secret_or_credential_disclosure_or_scope_expansion",
+          "authentication_or_authorization_weakening",
+          "security_policy_bypass",
+          "cross_workspace_or_trust_boundary_access"
+        ]
+      }
+    ],
+    "label_alone_does_not_escalate": [
+      "production",
+      "protected_or_release_branch",
+      "cost",
+      "external_communication"
+    ]
+  },
+  "done_integrity": {
+    "required_proof": [
+      "canonical_merged_identity_and_accepted_head",
+      "no_open_replacement_pr_or_mr",
+      "no_live_dependency_or_subtask_need",
+      "no_unique_local_or_untracked_work"
+    ],
+    "receipt_fields": [
+      "task_id",
+      "audit_time",
+      "repository_and_pr_url",
+      "accepted_or_merged_head",
+      "local_head",
+      "remote_containment_result",
+      "tree_status",
+      "session_or_subtask_state",
+      "runtime_or_resource_disposition"
+    ],
+    "merged_pr_or_done_placement_alone_is_not_proof": true
+  },
+  "exclusions": [
+    "secrets",
+    "credentials",
+    "transient_task_ids",
+    "transient_session_ids",
+    "live_board_state",
+    "full_charter_text"
+  ]
+}
