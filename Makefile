@@ -24,7 +24,7 @@ KANDEV_SDK := ../kandev/apps/backend
 ## itself always installs from `make package`/`package-host` output, not this.
 build:
 	mkdir -p bin
-	go build -o $(BIN) ./server/...
+	go build -o $(BIN) ./server
 
 ## Build + run. Mainly for -race / manual smoke checks: kandev normally spawns
 ## this binary itself via the go-plugin handshake, so a manually-started
