@@ -151,6 +151,98 @@ func TestRestore_TornReactivationBetweenLogAppendAndApplyIsResumed(t *testing.T)
 	require.Equal(t, 1, restoreMutations)
 }
 
+func TestRestore_ArchivedPhaseRejectsSubstitutedMutationCorrelation(t *testing.T) {
+	tests := []struct {
+		name      string
+		statement string
+	}{
+		{
+			name:      "mutation id",
+			statement: `UPDATE mutation_log SET mutation_id = mutation_id + 1000 WHERE workspace_id = ? AND restore_id = ?`,
+		},
+		{
+			name:      "record id",
+			statement: `UPDATE mutation_log SET record_id = 'substituted-record' WHERE workspace_id = ? AND restore_id = ?`,
+		},
+		{
+			name:      "record kind",
+			statement: `UPDATE mutation_log SET record_kind = 'escalation' WHERE workspace_id = ? AND restore_id = ?`,
+		},
+		{
+			name:      "restore id",
+			statement: `UPDATE mutation_log SET restore_id = 'substituted-restore' WHERE workspace_id = ? AND restore_id = ?`,
+		},
+		{
+			name:      "operation",
+			statement: `UPDATE mutation_log SET op = 'update' WHERE workspace_id = ? AND restore_id = ?`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestStore(t)
+			ws := "restore-substitution-" + tt.name
+			token := setupWorkspaceWithRecords(t, store, ws, 1)
+
+			receipt, err := store.Compact(ctx, ws, token, "", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+			require.NoError(t, err)
+			archived, err := resolveArchiveRef(ctx, store.db, ws, receipt.CompactionID, "ra")
+			require.NoError(t, err)
+
+			stuck, err := store.appendReactivationMutation(ctx, ws, token, "restore-substitution", "ra", KindFollowUp, archived, StorageInline)
+			require.NoError(t, err)
+			require.Equal(t, "archived", stuck.Phase)
+
+			_, err = store.db.ExecContext(ctx, tt.statement, ws, "restore-substitution")
+			require.NoError(t, err)
+
+			_, err = store.ReactivateRecord(ctx, ws, token, "restore-substitution", "ra", KindFollowUp, archived, StorageInline)
+			require.Error(t, err)
+			_, found, getErr := store.GetRecord(ctx, ws, "ra")
+			require.NoError(t, getErr)
+			require.False(t, found, "a substituted restore mutation must not write current state")
+
+			persisted, getErr := store.getRestoreReceipt(ctx, ws, "restore-substitution")
+			require.NoError(t, getErr)
+			require.Equal(t, "archived", persisted.Phase, "failed recovery must not mark the receipt committed")
+		})
+	}
+}
+
+func TestRestore_ArchivedPhaseRejectsDuplicateRestoreMutation(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "restore-duplicate-mutation"
+	token := setupWorkspaceWithRecords(t, store, ws, 1)
+
+	receipt, err := store.Compact(ctx, ws, token, "", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	archived, err := resolveArchiveRef(ctx, store.db, ws, receipt.CompactionID, "ra")
+	require.NoError(t, err)
+
+	stuck, err := store.appendReactivationMutation(ctx, ws, token, "restore-duplicate", "ra", KindFollowUp, archived, StorageInline)
+	require.NoError(t, err)
+	require.Equal(t, "archived", stuck.Phase)
+
+	original, err := getMutationByRestoreID(ctx, store.db, ws, "restore-duplicate")
+	require.NoError(t, err)
+	require.NotNil(t, original)
+	duplicate := *original
+	duplicate.MutationID += 1000
+	require.NoError(t, writeMutationRow(ctx, store.db, duplicate))
+
+	_, err = store.ReactivateRecord(ctx, ws, token, "restore-duplicate", "ra", KindFollowUp, archived, StorageInline)
+	require.ErrorContains(t, err, "multiple mutation-log entries")
+	_, found, getErr := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, getErr)
+	require.False(t, found, "ambiguous restore mutations must not write current state")
+
+	persisted, getErr := store.getRestoreReceipt(ctx, ws, "restore-duplicate")
+	require.NoError(t, getErr)
+	require.Equal(t, "archived", persisted.Phase, "failed recovery must not mark the receipt committed")
+}
+
 // TestRestore_ArchivedPhaseRetryIgnoresDivergentCallerBody is the exact
 // adversarial repro for the reported restore_id idempotency defect: a
 // retry of ReactivateRecord for a restore_id already stuck in the

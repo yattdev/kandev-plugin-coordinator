@@ -139,18 +139,18 @@ func (s *Store) finishReactivationApply(ctx context.Context, workspaceID string,
 			return fmt.Errorf("durablestate: restore_reactivation receipt %q has unexpected reactivated-record count %d", receipt.CompactionID, len(receipt.RolledRecords))
 		}
 		reactivated := receipt.RolledRecords[0]
+		mutation, err := getMutationByRestoreID(ctx, tx, workspaceID, receipt.RestoreID)
+		if err != nil {
+			return err
+		}
+		if err := validateReactivationMutation(receipt, reactivated, mutation); err != nil {
+			return err
+		}
 		existing, err := readCurrentStateRow(ctx, tx, workspaceID, reactivated.RecordID)
 		if err != nil {
 			return err
 		}
 		if existing == nil {
-			mutation, err := getMutationByRestoreID(ctx, tx, workspaceID, receipt.RestoreID)
-			if err != nil {
-				return err
-			}
-			if mutation == nil || mutation.After == nil {
-				return fmt.Errorf("durablestate: restore_reactivation %q has no durable mutation-log entry to apply", receipt.RestoreID)
-			}
 			body, err := resolvePayload(ctx, tx, workspaceID, mutation.After)
 			if err != nil {
 				return fmt.Errorf("durablestate: resolving restore_reactivation %q's durable body: %w", receipt.RestoreID, err)
@@ -171,6 +171,27 @@ func (s *Store) finishReactivationApply(ctx context.Context, workspaceID string,
 			workspaceID, receipt.CompactionID)
 		return err
 	})
+}
+
+// validateReactivationMutation ties the durable add mutation back to every
+// identity field in the archived receipt before recovery can update either
+// current_state or the receipt phase. restore_id alone is not sufficient:
+// an altered row could otherwise substitute a different record while still
+// being selected by the recovery query.
+func validateReactivationMutation(receipt *CompactionReceipt, reactivated RolledRecord, mutation *Mutation) error {
+	if mutation == nil {
+		return fmt.Errorf("durablestate: restore_reactivation %q has no durable mutation-log entry to apply", receipt.RestoreID)
+	}
+	if mutation.MutationID != reactivated.MutationID ||
+		mutation.RecordID != reactivated.RecordID ||
+		mutation.RecordKind != reactivated.Kind ||
+		mutation.RestoreID != receipt.RestoreID {
+		return fmt.Errorf("durablestate: restore_reactivation %q mutation-log correlation does not match its receipt", receipt.RestoreID)
+	}
+	if mutation.Op != OpAdd || mutation.CompactionID != "" || mutation.Before != nil || mutation.After == nil {
+		return fmt.Errorf("durablestate: restore_reactivation %q does not reference a valid durable add mutation", receipt.RestoreID)
+	}
+	return nil
 }
 
 func (s *Store) getRestoreReceipt(ctx context.Context, workspaceID, restoreID string) (*CompactionReceipt, error) {

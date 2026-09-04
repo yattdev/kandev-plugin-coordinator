@@ -131,10 +131,6 @@ func (s *Store) MigrateDown(ctx context.Context, steps int) error {
 	if current == 0 || steps <= 0 {
 		return nil
 	}
-	byVersion := make(map[int]migration, len(migrations))
-	for _, m := range migrations {
-		byVersion[m.version] = m
-	}
 	sorted := append([]migration(nil), migrations...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].version > sorted[j].version })
 	applied := 0

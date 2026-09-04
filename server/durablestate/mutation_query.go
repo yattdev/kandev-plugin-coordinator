@@ -3,6 +3,7 @@ package durablestate
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 // scanMutationRow scans one mutation_log row (in the exact column order
@@ -115,11 +116,9 @@ func getMutationsByCompactionID(ctx context.Context, tx execer, workspaceID, com
 
 // getMutationByRestoreID returns the single append-only mutation-log entry
 // tagged with restoreID (the add-op appendReactivationMutation wrote), or
-// nil if none exists. Used by finishReactivationApply so a retry of
-// ReactivateRecord can never apply a body other than the one already
-// durably recorded for this restore_id — the mutation log, not any
-// caller-supplied argument, is the sole source of truth for what a retry
-// commits.
+// nil if none exists. Multiple matches fail closed: restore_id is a
+// correlation key rather than a schema-level uniqueness constraint, so a
+// recovery path must not choose arbitrarily between substituted entries.
 func getMutationByRestoreID(ctx context.Context, tx execer, workspaceID, restoreID string) (*Mutation, error) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT mutation_id, timestamp, op, record_id, record_kind,
@@ -137,6 +136,12 @@ func getMutationByRestoreID(ctx context.Context, tx execer, workspaceID, restore
 	}
 	m, err := scanMutationRow(workspaceID, rows)
 	if err != nil {
+		return nil, err
+	}
+	if rows.Next() {
+		return nil, fmt.Errorf("durablestate: restore_id %q has multiple mutation-log entries", restoreID)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return &m, nil
