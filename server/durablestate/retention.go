@@ -38,9 +38,13 @@ func (s *Store) PrunableSnapshotIDs(ctx context.Context, workspaceID string, kee
 // mutation_log_watermark may be pruned, since no retained snapshot needs
 // them for replay.
 func (s *Store) PrunableMutationIDs(ctx context.Context, workspaceID string, retainedSnapshotIDs []string) ([]int64, error) {
+	return prunableMutationIDs(ctx, s.db, workspaceID, retainedSnapshotIDs)
+}
+
+func prunableMutationIDs(ctx context.Context, tx execer, workspaceID string, retainedSnapshotIDs []string) ([]int64, error) {
 	var watermark *int64
 	for _, id := range retainedSnapshotIDs {
-		snap, err := s.GetSnapshot(ctx, workspaceID, id)
+		snap, err := scanSnapshot(ctx, tx, workspaceID, id)
 		if err != nil {
 			return nil, err
 		}
@@ -55,7 +59,7 @@ func (s *Store) PrunableMutationIDs(ctx context.Context, workspaceID string, ret
 	if watermark == nil {
 		return nil, nil
 	}
-	mutations, err := s.ListMutations(ctx, workspaceID)
+	mutations, err := listMutations(ctx, tx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -133,45 +137,39 @@ func (s *Store) PruneSnapshots(ctx context.Context, workspaceID string, fencingT
 // (§6), this is checked against fencingToken so a stale, fenced-out leader
 // cannot prune append-only history out from under the current one.
 func (s *Store) PruneMutations(ctx context.Context, workspaceID string, fencingToken int64, retainedSnapshotIDs []string) ([]int64, error) {
-	prunable, err := s.PrunableMutationIDs(ctx, workspaceID, retainedSnapshotIDs)
-	if err != nil {
-		return nil, err
-	}
-	if len(prunable) == 0 {
-		return nil, nil
-	}
-	protected, err := s.protectedMutationIDs(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	filtered := prunable[:0:0]
-	for _, id := range prunable {
-		if protected[id] {
-			continue
-		}
-		filtered = append(filtered, id)
-	}
-	prunable = filtered
-	if len(prunable) == 0 {
-		return nil, nil
-	}
-	err = s.withWriteTx(ctx, func(tx execer) error {
+	var pruned []int64
+	err := s.withWriteTx(ctx, func(tx execer) error {
 		if err := checkFencing(ctx, tx, workspaceID, fencingToken); err != nil {
 			return err
 		}
+		prunable, err := prunableMutationIDs(ctx, tx, workspaceID, retainedSnapshotIDs)
+		if err != nil {
+			return err
+		}
+		if len(prunable) == 0 {
+			return nil
+		}
+		protected, err := protectedMutationIDs(ctx, tx, workspaceID)
+		if err != nil {
+			return err
+		}
 		for _, id := range prunable {
+			if protected[id] {
+				continue
+			}
 			if _, err := tx.ExecContext(ctx,
 				`DELETE FROM mutation_log WHERE workspace_id = ? AND mutation_id = ?`, workspaceID, id,
 			); err != nil {
 				return err
 			}
+			pruned = append(pruned, id)
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("durablestate: pruning mutations for workspace %q: %w", workspaceID, err)
 	}
-	return prunable, nil
+	return pruned, nil
 }
 
 // protectedMutationIDs returns the set of mutation_ids named by
@@ -180,7 +178,11 @@ func (s *Store) PruneMutations(ctx context.Context, workspaceID string, fencingT
 // is still "archived"). See PruneMutations for why these must survive
 // pruning regardless of snapshot watermark.
 func (s *Store) protectedMutationIDs(ctx context.Context, workspaceID string) (map[int64]bool, error) {
-	receipts, err := s.ListCompactionReceipts(ctx, workspaceID)
+	return protectedMutationIDs(ctx, s.db, workspaceID)
+}
+
+func protectedMutationIDs(ctx context.Context, tx execer, workspaceID string) (map[int64]bool, error) {
+	receipts, err := listCompactionReceipts(ctx, tx, workspaceID)
 	if err != nil {
 		return nil, err
 	}

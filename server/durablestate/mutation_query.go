@@ -59,7 +59,11 @@ func scanMutationRow(workspaceID string, rows *sql.Rows) (Mutation, error) {
 // ListMutations returns every mutation-log entry for workspaceID in
 // ascending mutation_id order.
 func (s *Store) ListMutations(ctx context.Context, workspaceID string) ([]Mutation, error) {
-	rows, err := s.db.QueryContext(ctx,
+	return listMutations(ctx, s.db, workspaceID)
+}
+
+func listMutations(ctx context.Context, tx execer, workspaceID string) ([]Mutation, error) {
+	rows, err := tx.QueryContext(ctx,
 		`SELECT mutation_id, timestamp, op, record_id, record_kind,
 			before_storage, before_sha256, before_body, before_ref,
 			after_storage, after_sha256, after_body, after_ref,

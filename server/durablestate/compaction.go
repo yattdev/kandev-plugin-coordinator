@@ -535,12 +535,16 @@ func nullIfEmpty(s string) sql.NullString {
 // getCompactionReceipt reads one compaction receipt back by ID, or (nil,
 // nil) if it does not exist.
 func (s *Store) getCompactionReceipt(ctx context.Context, workspaceID, compactionID string) (*CompactionReceipt, error) {
+	return getCompactionReceipt(ctx, s.db, workspaceID, compactionID)
+}
+
+func getCompactionReceipt(ctx context.Context, tx execer, workspaceID, compactionID string) (*CompactionReceipt, error) {
 	var r CompactionReceipt
 	r.CompactionID = compactionID
 	r.WorkspaceID = workspaceID
 	var kind, restoreID, preSnapshotID, postSnapshotID sql.NullString
 	var rolledEncoded string
-	err := s.db.QueryRowContext(ctx,
+	err := tx.QueryRowContext(ctx,
 		`SELECT timestamp, kind, restore_id,
 			pre_snapshot_id, pre_byte_count, pre_sha256, pre_record_count, pre_record_id_set_sha256,
 			rolled_records,
@@ -576,7 +580,11 @@ func (s *Store) getCompactionReceipt(ctx context.Context, workspaceID, compactio
 // ListCompactionReceipts returns every compaction receipt for workspaceID
 // ordered by timestamp ascending.
 func (s *Store) ListCompactionReceipts(ctx context.Context, workspaceID string) ([]CompactionReceipt, error) {
-	rows, err := s.db.QueryContext(ctx,
+	return listCompactionReceipts(ctx, s.db, workspaceID)
+}
+
+func listCompactionReceipts(ctx context.Context, tx execer, workspaceID string) ([]CompactionReceipt, error) {
+	rows, err := tx.QueryContext(ctx,
 		`SELECT compaction_id FROM compaction_receipts WHERE workspace_id = ? ORDER BY timestamp ASC`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -596,7 +604,7 @@ func (s *Store) ListCompactionReceipts(ctx context.Context, workspaceID string) 
 	}
 	out := make([]CompactionReceipt, 0, len(ids))
 	for _, id := range ids {
-		r, err := s.getCompactionReceipt(ctx, workspaceID, id)
+		r, err := getCompactionReceipt(ctx, tx, workspaceID, id)
 		if err != nil {
 			return nil, err
 		}
