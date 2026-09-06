@@ -62,6 +62,22 @@ workspace context; body identifiers never select another workspace. The plugin
 does not receive task/message write permission and never calls `Tasks.Create`
 for a run.
 
+## Durable state and policy contract
+
+`server/durablestate` provides the plugin-owned SQLite materialized-state,
+append-only mutation log, snapshots, hash-anchored compaction, deterministic
+restore/replay, and fencing primitives defined by the pinned Coordinator state
+contract. It remains a library boundary; scheduler and host transport policy
+stay in `server/coordinator`.
+
+The exact upstream Coordinator policy contract and standalone validator are
+vendored under `docs/contracts/upstream`. The repository validates both those
+bytes and this plugin's defaults snapshot in CI, failing closed on authority,
+gate, queue/receipt, or Done-integrity drift. See
+[`docs/contracts/README.md`](docs/contracts/README.md) for the checks and
+[`docs/contracts/PROVENANCE.md`](docs/contracts/PROVENANCE.md) for the immutable
+source pin and refresh procedure.
+
 ## Development
 
 The SDK is currently a sibling checkout because `pkg/pluginsdk` is not a
@@ -80,6 +96,7 @@ Install development dependencies and run the full verification:
 npm ci --ignore-scripts --include=dev
 make test
 make vet
+make verify-contract
 make verify-package-host
 ```
 

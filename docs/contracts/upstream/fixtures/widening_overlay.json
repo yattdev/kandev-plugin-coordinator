@@ -1,0 +1,24 @@
+{
+  "overlay_id": "example-workspace-overlay",
+  "base_contract_version": "1.1.0",
+  "narrows": {
+    "cross_workspace_authority": true,
+    "coordinator_decidable_examples": [
+      "task_owned_edits",
+      "tests_and_diagnostics",
+      "commits",
+      "normal_nonrewriting_pushes",
+      "pr_mr_creation_or_update",
+      "qualified_draft_to_ready",
+      "additive_nonrewriting_branch_reconciliation",
+      "reversible_board_moves",
+      "ci_review_remediation",
+      "ordinary_provider_operations",
+      "bounded_retries_after_cause_understood",
+      "merge_to_main"
+    ],
+    "human_reserved_classes": [
+      "destructive_or_irreversible"
+    ]
+  }
+}
