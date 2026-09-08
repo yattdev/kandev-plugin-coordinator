@@ -1,0 +1,21 @@
+{
+  "coordinator_label": "[Çööřđîñåţööř]",
+  "coordinator_subtitle": "[ßööåřđ öřçĥéšţřåţîööñ]",
+  "coordinator_chat": "[Çĥåţ]",
+  "coordinator_reports": "[Řéþööřţš]",
+  "coordinator_settings": "[Çööřđîñåţööř šéţţîñĝš]",
+  "coordinator_refresh": "[Řéƒřéšĥ řéþööřţš]",
+	"coordinator_loadMore": "[Ļööåđ ɱööřé řéþööřţš]",
+  "coordinator_runCycle": "[Řûñ çýçļé ñööŵ]",
+  "coordinator_runStandup": "[Řûñ šţåñđûþ ñööŵ]",
+  "coordinator_emptyReports": "[Ñöö çööřđîñåţööř řéþööřţš ýéţ.]",
+  "coordinator_loading": "[Ļööåđîñĝ çööřđîñåţööř…]",
+	"coordinator_noWorkspace": "[Šéļéçţ å ŵööřķšþåçé ţöö ûšé Çööřđîñåţööř.]",
+	"coordinator_placeholder": "[Méššåĝé ţĥé çööřđîñåţööř…]",
+  "coordinator_unavailable": "[Çööřđîñåţööř çööñVéřšåţîööñš řéqûîřé å çööɱþåţîƀļé ĶåñđéV ĥööšţ.]",
+  "coordinator_configurationRequired": "[Çööñƒîĝûřé å ûšåƀļé çööřđîñåţööř ööř ŵööřķšþåçé þřööƒîļé.]",
+  "coordinator_runQueued": "[Çööřđîñåţööř řûñ qûéûéđ.]",
+  "coordinator_runBusy": "[Çööřđîñåţööř îš ƀûšý. Ţĥîš řûñ ŵåš ñöţ qûéûéđ.]",
+  "coordinator_runDuplicate": "[Ţĥîš çööřđîñåţööř řûñ ŵåš åļřéåđý ĥåñđļéđ.]",
+  "coordinator_failed": "[Çööřđîñåţööř řéqûéšţ ƒåîļéđ.]"
+}

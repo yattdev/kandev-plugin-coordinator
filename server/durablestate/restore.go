@@ -150,11 +150,11 @@ func (s *Store) finishReactivationApply(ctx context.Context, workspaceID string,
 		if err != nil {
 			return err
 		}
+		body, err := resolvePayload(ctx, tx, workspaceID, mutation.After)
+		if err != nil {
+			return fmt.Errorf("durablestate: resolving restore_reactivation %q's durable body: %w", receipt.RestoreID, err)
+		}
 		if existing == nil {
-			body, err := resolvePayload(ctx, tx, workspaceID, mutation.After)
-			if err != nil {
-				return fmt.Errorf("durablestate: resolving restore_reactivation %q's durable body: %w", receipt.RestoreID, err)
-			}
 			encoded, err := marshalBody(body)
 			if err != nil {
 				return err
@@ -164,6 +164,14 @@ func (s *Store) finishReactivationApply(ctx context.Context, workspaceID string,
 				workspaceID, reactivated.RecordID, string(reactivated.Kind), encoded, mutation.After.SHA256, nowUTC(),
 			); err != nil {
 				return err
+			}
+		} else {
+			existingSHA, err := canonicalHash(existing.Body)
+			if err != nil {
+				return err
+			}
+			if existing.RecordKind != reactivated.Kind || existing.SHA256 != mutation.After.SHA256 || existingSHA != mutation.After.SHA256 {
+				return fmt.Errorf("durablestate: restore_reactivation %q found an existing current-state row that does not match its durable mutation; leaving receipt archived", receipt.RestoreID)
 			}
 		}
 		_, err = tx.ExecContext(ctx,

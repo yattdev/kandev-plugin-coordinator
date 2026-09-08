@@ -336,6 +336,39 @@ func TestRestore_ArchivedPhaseRetryWithContentRefIgnoresDivergentCallerBody(t *t
 	require.Equal(t, original, rec.Body, "archived-phase retry must resolve and apply the content_ref-backed logged body, not the caller's divergent retry body")
 }
 
+func TestRestore_ArchivedPhaseRejectsCompetingCurrentStateRow(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	ws := "restore-competing-current-state"
+	token := setupWorkspaceWithRecords(t, store, ws, 1)
+
+	receipt, err := store.Compact(ctx, ws, token, "restore-competing-rollup", []RolledRecordInput{{RecordID: "ra", ResolvedAt: nowUTC()}})
+	require.NoError(t, err)
+	original, err := resolveArchiveRef(ctx, store.db, ws, receipt.CompactionID, "ra")
+	require.NoError(t, err)
+
+	stuck, err := store.appendReactivationMutation(ctx, ws, token, "restore-competing", "ra", KindFollowUp, original, StorageInline)
+	require.NoError(t, err)
+	require.Equal(t, "archived", stuck.Phase)
+
+	// A competing writer may recreate the record after the restore mutation
+	// was appended but before its current-state phase completed.
+	competitor := map[string]any{"resolution": "different durable state"}
+	_, err = store.AppendAdd(ctx, ws, token, "ra", KindFollowUp, competitor, StorageInline)
+	require.NoError(t, err)
+
+	_, err = store.ReactivateRecord(ctx, ws, token, "restore-competing", "ra", KindFollowUp, original, StorageInline)
+	require.ErrorContains(t, err, "does not match its durable mutation")
+
+	persisted, err := store.getRestoreReceipt(ctx, ws, "restore-competing")
+	require.NoError(t, err)
+	require.Equal(t, "archived", persisted.Phase)
+	rec, found, err := store.GetRecord(ctx, ws, "ra")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, competitor, rec.Body)
+}
+
 func TestRestore_RejectsRestoreIDCollidingWithRollupReceipt(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
