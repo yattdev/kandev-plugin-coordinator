@@ -38,6 +38,7 @@ export type CoordinatorHost = {
     useEffect(effect: () => void | (() => void), dependencies: unknown[]): void;
     useMemo<T>(factory: () => T, dependencies: unknown[]): T;
     useState<T>(initial: T): [T, (value: T | ((current: T) => T)) => void];
+    useRef<T>(initial: T): { current: T };
   };
   jsx(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): ElementNode;
   ui: {
