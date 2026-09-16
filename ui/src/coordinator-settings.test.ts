@@ -25,23 +25,39 @@ describe("CoordinatorSettings workspace isolation", () => {
     let tree = harness.render(Settings, { workspaceId: "workspace-a" });
     expect(control(tree, "textarea").props.disabled).toBe(true);
     tree = harness.render(Settings, { workspaceId: "workspace-b" });
-    pending.get("workspace-b:load")?.resolve({ selections: [{ workflow_id: "b", workstep_id: "b" }] });
+    expect(control(tree, "button").props.disabled).toBe(true);
+    control(tree, "button").props.onClick();
+    expect(invokeAction).toHaveBeenCalledTimes(2);
+    const bLoad = pending.get("workspace-b:load");
+    expect(bLoad).toBeDefined();
+    bLoad!.resolve({ selections: [{ workflow_id: "b", workstep_id: "b" }] });
     await flush();
     tree = harness.render(Settings, { workspaceId: "workspace-b" });
     expect(control(tree, "textarea").props.value).toContain('"b"');
     expect(control(tree, "button").props.disabled).toBe(false);
 
-    pending.get("workspace-a:load")?.resolve({ selections: [{ workflow_id: "a", workstep_id: "a" }] });
+    const staleALoad = pending.get("workspace-a:load");
+    expect(staleALoad).toBeDefined();
+    staleALoad!.resolve({ selections: [{ workflow_id: "a", workstep_id: "a" }] });
     await flush();
     tree = harness.render(Settings, { workspaceId: "workspace-b" });
     expect(control(tree, "textarea").props.value).toContain('"b"');
     expect(control(tree, "textarea").props.value).not.toContain('"a"');
 
     control(tree, "button").props.onClick();
+    expect(invokeAction).toHaveBeenCalledTimes(3);
+    expect(invokeAction).toHaveBeenCalledWith("coordinator.policy", {
+      workspaceId: "workspace-b",
+      body: { selections: [{ workflow_id: "b", workstep_id: "b" }] },
+    }, { signal: undefined });
+    const bSave = pending.get("workspace-b:save");
+    expect(bSave).toBeDefined();
     tree = harness.render(Settings, { workspaceId: "workspace-a" });
-    pending.get("workspace-a:load")?.resolve({ selections: [] });
+    const aLoad = pending.get("workspace-a:load");
+    expect(aLoad).toBeDefined();
+    aLoad!.resolve({ selections: [] });
     await flush();
-    pending.get("workspace-b:save")?.resolve({ selections: [] });
+    bSave!.resolve({ selections: [] });
     await flush();
     tree = harness.render(Settings, { workspaceId: "workspace-a" });
     expect(control(tree, "textarea").props.value).toBe("[]");
