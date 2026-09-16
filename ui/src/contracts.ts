@@ -29,6 +29,9 @@ export type RunResponse = {
   dispatch: { status: string; occurrence_key?: string };
 };
 
+export type WorkflowPolicy = { workflow_id: string; workstep_id: string; prompt?: string };
+export type PolicyResponse = { selections: WorkflowPolicy[] };
+
 export type CoordinatorHost = {
   React: {
     createElement(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): ElementNode;
@@ -69,6 +72,13 @@ export type CoordinatorRegistry = {
     component: Component,
     options?: { topbar?: boolean | { title?: string; subtitle?: string; icon?: string } },
   ): void;
+  registerIntegrationSettings?(settings: {
+    id: string;
+    label: string;
+    description: string;
+    icon?: string;
+    Component: Component<{ workspaceId?: string }>;
+  }): void;
 };
 
 declare global {

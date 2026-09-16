@@ -1,4 +1,5 @@
 import { createCoordinatorPage } from "./coordinator-page";
+import { createCoordinatorSettings } from "./coordinator-settings";
 import type { CoordinatorHost, CoordinatorRegistry } from "./contracts";
 import { coordinatorCatalogs, localizedLabel } from "./locales";
 
@@ -14,6 +15,13 @@ export function registerCoordinator(registry: CoordinatorRegistry, host: Coordin
   });
   registry.registerRoute("/coordinator", createCoordinatorPage(host), {
 		topbar: { title: label, subtitle: host.i18n.t("coordinator_subtitle"), icon: "bot" },
+  });
+  registry.registerIntegrationSettings?.({
+    id: "coordinator",
+    label,
+    description: "Choose the workflow steps monitored in this workspace.",
+    icon: "bot",
+    Component: createCoordinatorSettings(host),
   });
 }
 

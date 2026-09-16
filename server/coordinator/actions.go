@@ -15,6 +15,7 @@ const (
 	ActionReports    = "coordinator.reports"
 	ActionRunCycle   = "coordinator.run-cycle"
 	ActionRunStandup = "coordinator.run-standup"
+	ActionPolicy     = "coordinator.policy"
 )
 
 func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {
@@ -72,6 +73,24 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 			return nil, err
 		}
 		return actionJSON(map[string]any{"dispatch": result})
+	case ActionPolicy:
+		if len(req.Body) == 0 {
+			policy, err := p.policy(ctx, workspaceID)
+			if err != nil {
+				return nil, err
+			}
+			return actionJSON(map[string]any{"selections": policy})
+		}
+		var input struct {
+			Selections []WorkflowPolicy `json:"selections"`
+		}
+		if err := json.Unmarshal(req.Body, &input); err != nil {
+			return nil, fmt.Errorf("coordinator: decoding policy request: %w", err)
+		}
+		if err := p.savePolicy(ctx, workspaceID, input.Selections); err != nil {
+			return nil, err
+		}
+		return actionJSON(map[string]any{"selections": input.Selections})
 	default:
 		return nil, fmt.Errorf("coordinator: unknown action %q", req.ActionKey)
 	}

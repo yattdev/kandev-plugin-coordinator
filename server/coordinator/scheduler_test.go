@@ -27,10 +27,10 @@ func configuredScheduler(t *testing.T, dispatchStatus string) (*Plugin, *fakeHos
 	host.workflows = []pluginsdk.Workflow{{ID: "workflow-1", WorkspaceID: "workspace-1", Name: "Build"}}
 	host.steps["workflow-1"] = []pluginsdk.WorkflowStep{{
 		ID: "step-1", WorkflowID: "workflow-1", Name: "Work",
-		CoordinatorMonitored: true, CoordinatorPrompt: "check progress",
 	}}
 	plugin := NewWithConversationManager(hostConversationManager{manager: manager})
 	plugin.UnimplementedPlugin.SetHost(host)
+	require.NoError(t, plugin.savePolicy(context.Background(), "workspace-1", []WorkflowPolicy{{WorkflowID: "workflow-1", WorkstepID: "step-1", Prompt: "check progress"}}))
 	return plugin, host, manager
 }
 
