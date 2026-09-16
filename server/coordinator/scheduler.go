@@ -111,6 +111,9 @@ func validateManualKey(idempotencyKey string) error {
 
 func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, config Config, trigger, occurrenceKey string, now time.Time, scheduled bool) (DispatchResult, error) {
 	result, dispatchErr := p.dispatchOccurrence(ctx, workspaceID, config, trigger, occurrenceKey)
+	if errors.Is(dispatchErr, ErrMonitoringConfigurationRequired) {
+		return result, dispatchErr
+	}
 	statusValue := result.Status
 	if dispatchErr != nil {
 		statusValue = "failed"

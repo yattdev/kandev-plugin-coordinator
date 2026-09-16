@@ -129,6 +129,24 @@ func TestUnavailablePolicyDisablesScheduledRunsWithoutRecordingFailure(t *testin
 	require.Empty(t, page.Reports, "manual configuration errors must not emit status reports")
 }
 
+func TestLateUnavailablePolicyDoesNotRecordDispatchFailure(t *testing.T) {
+	plugin, host, _ := configuredScheduler(t, "started")
+	config, err := plugin.config(context.Background())
+	require.NoError(t, err)
+	checks, err := plugin.selectedChecks(context.Background(), "workspace-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, checks, "the caller's initial availability check succeeds")
+	host.steps["workflow-1"] = nil
+	_, err = plugin.dispatchAndRecord(context.Background(), "workspace-1", config, TriggerCycle, "manual/workspace-1/cycle/late-unavailable", time.Now(), false)
+	require.ErrorIs(t, err, ErrMonitoringConfigurationRequired)
+	state, err := plugin.readState(context.Background(), "workspace-1")
+	require.NoError(t, err)
+	require.Empty(t, state.Schedule.LastDispatch.Status)
+	page, err := plugin.listReports(context.Background(), "workspace-1", "", 20)
+	require.NoError(t, err)
+	require.Empty(t, page.Reports)
+}
+
 func TestManualBusyDispatchCreatesStatusWithoutArmingSchedule(t *testing.T) {
 	plugin, _, _ := configuredScheduler(t, "skipped_busy")
 	result, err := plugin.RunManual(context.Background(), "workspace-1", TriggerStandup, "button-1")
