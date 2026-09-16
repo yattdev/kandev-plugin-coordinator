@@ -88,6 +88,13 @@ func (p *Plugin) RunManual(ctx context.Context, workspaceID, trigger, idempotenc
 	if err := config.ReadyForRun(); err != nil {
 		return DispatchResult{}, err
 	}
+	checks, err := p.selectedChecks(ctx, workspaceID)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+	if len(checks) == 0 {
+		return DispatchResult{}, ErrMonitoringConfigurationRequired
+	}
 	key := fmt.Sprintf("manual/%s/%s/%s", workspaceID, trigger, idempotencyKey)
 	return p.dispatchAndRecord(ctx, workspaceID, config, trigger, key, p.now(), false)
 }

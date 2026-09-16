@@ -121,6 +121,12 @@ func TestUnavailablePolicyDisablesScheduledRunsWithoutRecordingFailure(t *testin
 	require.Empty(t, state.Schedule.LastDispatch.Status)
 	_, err = plugin.RunManual(context.Background(), "workspace-1", TriggerCycle, "manual-disabled")
 	require.ErrorIs(t, err, ErrMonitoringConfigurationRequired)
+	state, err = plugin.readState(context.Background(), "workspace-1")
+	require.NoError(t, err)
+	require.Empty(t, state.Schedule.LastDispatch.Status, "manual configuration errors must not be recorded as failed dispatches")
+	page, err := plugin.listReports(context.Background(), "workspace-1", "", 20)
+	require.NoError(t, err)
+	require.Empty(t, page.Reports, "manual configuration errors must not emit status reports")
 }
 
 func TestManualBusyDispatchCreatesStatusWithoutArmingSchedule(t *testing.T) {
