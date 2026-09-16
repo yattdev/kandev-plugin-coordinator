@@ -29,6 +29,7 @@ func configuredScheduler(t *testing.T, dispatchStatus string) (*Plugin, *fakeHos
 		ID: "step-1", WorkflowID: "workflow-1", Name: "Work",
 	}}
 	plugin := NewWithConversationManager(hostConversationManager{manager: manager})
+	installTestPolicyStore(t, plugin)
 	plugin.UnimplementedPlugin.SetHost(host)
 	require.NoError(t, plugin.savePolicy(context.Background(), "workspace-1", []WorkflowPolicy{{WorkflowID: "workflow-1", WorkstepID: "step-1", Prompt: "check progress"}}))
 	return plugin, host, manager
@@ -106,6 +107,20 @@ func TestManualRunsHaveSeparateCallerIdempotency(t *testing.T) {
 		_, err := plugin.RunManual(context.Background(), "workspace-1", TriggerCycle, string(make([]byte, 257)))
 		return err
 	}(), "must not exceed")
+}
+
+func TestUnavailablePolicyDisablesScheduledRunsWithoutRecordingFailure(t *testing.T) {
+	plugin, host, manager := configuredScheduler(t, "started")
+	host.steps["workflow-1"] = nil
+	config, err := plugin.config(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, plugin.runWorkspaceDue(context.Background(), "workspace-1", config, time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC)))
+	require.Empty(t, manager.dispatches)
+	state, err := plugin.readState(context.Background(), "workspace-1")
+	require.NoError(t, err)
+	require.Empty(t, state.Schedule.LastDispatch.Status)
+	_, err = plugin.RunManual(context.Background(), "workspace-1", TriggerCycle, "manual-disabled")
+	require.ErrorIs(t, err, ErrMonitoringConfigurationRequired)
 }
 
 func TestManualBusyDispatchCreatesStatusWithoutArmingSchedule(t *testing.T) {

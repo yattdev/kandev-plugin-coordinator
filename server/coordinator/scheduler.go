@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// ErrMonitoringConfigurationRequired means no saved policy currently resolves
+// to a Host workflow step. It is an operator-visible disabled state, never a
+// failed dispatch.
+var ErrMonitoringConfigurationRequired = errors.New("monitoring configuration is required")
+
 func (p *Plugin) RunDue(ctx context.Context, now time.Time) error {
 	config, err := p.config(ctx)
 	if err != nil {
@@ -36,6 +41,13 @@ func (p *Plugin) RunDue(ctx context.Context, now time.Time) error {
 }
 
 func (p *Plugin) runWorkspaceDue(ctx context.Context, workspaceID string, config Config, now time.Time) error {
+	checks, err := p.selectedChecks(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	if len(checks) == 0 {
+		return nil
+	}
 	state, err := p.readState(ctx, workspaceID)
 	if err != nil {
 		return err
@@ -138,7 +150,7 @@ func (p *Plugin) dispatchOccurrence(ctx context.Context, workspaceID string, con
 		return DispatchResult{}, err
 	}
 	if len(checks) == 0 {
-		return DispatchResult{}, fmt.Errorf("no workflow steps are configured for monitoring")
+		return DispatchResult{}, ErrMonitoringConfigurationRequired
 	}
 	if _, err := ensureConversation(ctx, p.manager, workspaceID, config); err != nil {
 		return DispatchResult{}, err

@@ -13,7 +13,7 @@ import (
 const (
 	stateKeyV2     = "coordinator_state_v2"
 	legacyStateKey = "coordinator_state"
-	stateVersion   = 3
+	stateVersion   = 2
 	MaxReports     = 200
 	MaxCycleLogs   = 200
 	cycleLogMaxAge = 7 * 24 * time.Hour
@@ -63,9 +63,9 @@ type CoordinatorState struct {
 	Schedule      ScheduleState                   `json:"schedule"`
 }
 
-// WorkflowPolicy is a plugin-owned monitoring selection. Workflow and step
-// names are intentionally not persisted: the Host readers remain authoritative
-// for presentation and for deciding whether a saved selection is available.
+// WorkflowPolicy is stored as a versioned durable-state record. Workflow and
+// step names are not persisted: Host readers remain authoritative for
+// presentation and availability.
 type WorkflowPolicy struct {
 	WorkflowID string `json:"workflow_id"`
 	WorkstepID string `json:"workstep_id"`
@@ -80,10 +80,9 @@ type PublishedState struct {
 }
 
 type workspaceDocument struct {
-	Version        int              `json:"version"`
-	State          CoordinatorState `json:"state"`
-	Reports        []ReportArtifact `json:"reports"`
-	WorkflowPolicy []WorkflowPolicy `json:"workflow_policy"`
+	Version int              `json:"version"`
+	State   CoordinatorState `json:"state"`
+	Reports []ReportArtifact `json:"reports"`
 }
 
 type workspaceLocks struct {

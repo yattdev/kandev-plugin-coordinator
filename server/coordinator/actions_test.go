@@ -53,6 +53,7 @@ func TestEnsureActionReturnsTypedConfigurationState(t *testing.T) {
 
 func TestActionsRejectMissingVerifiedWorkspace(t *testing.T) {
 	plugin := New()
+	installTestPolicyStore(t, plugin)
 	_, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{ActionKey: ActionStatus})
 	require.ErrorContains(t, err, "verified workspace context")
 }
@@ -77,4 +78,22 @@ func TestPolicyActionUsesVerifiedWorkspaceAndPersistsSelections(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, checks, 1)
 	require.Equal(t, "inspect blockers", checks[0].Prompt)
+}
+
+func TestStatusAndManualActionsReportUnavailablePolicyAsConfigurationRequired(t *testing.T) {
+	host := newFakeHost()
+	host.config = map[string]any{"monitoring_enabled": true}
+	plugin := NewWithConversationManager(unavailableConversationManager{})
+	installTestPolicyStore(t, plugin)
+	plugin.UnimplementedPlugin.SetHost(host)
+	status, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{ActionKey: ActionStatus, Context: pluginsdk.VerifiedActionContext{WorkspaceID: "workspace-1"}})
+	require.NoError(t, err)
+	var statusBody map[string]any
+	require.NoError(t, json.Unmarshal(status.Body, &statusBody))
+	require.Equal(t, "configuration_required", statusBody["status"])
+	manual, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{ActionKey: ActionRunCycle, Context: pluginsdk.VerifiedActionContext{WorkspaceID: "workspace-1"}, Body: []byte(`{"idempotency_key":"manual-1"}`)})
+	require.NoError(t, err)
+	var manualBody map[string]any
+	require.NoError(t, json.Unmarshal(manual.Body, &manualBody))
+	require.Equal(t, "configuration_required", manualBody["status"])
 }

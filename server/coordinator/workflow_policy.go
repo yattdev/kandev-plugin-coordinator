@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"kandev-plugin-coordinator/server/durablestate"
 )
+
+const workflowPolicyRecordID = "coordinator-workflow-policy"
 
 // selectedChecks resolves the plugin-owned policy against generic Host
 // workflow readers. Deleted or moved selections stay saved but are unavailable
@@ -32,12 +36,12 @@ func (p *Plugin) selectedChecks(ctx context.Context, workspaceID string) ([]Poli
 			}
 		}
 	}
-	doc, err := p.loadDocument(ctx, workspaceID)
+	policy, err := p.policy(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	checks := make([]PolicyCheck, 0, len(doc.WorkflowPolicy))
-	for _, selected := range doc.WorkflowPolicy {
+	checks := make([]PolicyCheck, 0, len(policy))
+	for _, selected := range policy {
 		check, found := byWorkflow[selected.WorkflowID][selected.WorkstepID]
 		if !found {
 			continue
@@ -58,17 +62,29 @@ func (p *Plugin) selectedChecks(ctx context.Context, workspaceID string) ([]Poli
 }
 
 func (p *Plugin) policy(ctx context.Context, workspaceID string) ([]WorkflowPolicy, error) {
-	doc, err := p.loadDocument(ctx, workspaceID)
+	store, err := p.durablePolicyStore(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return append([]WorkflowPolicy(nil), doc.WorkflowPolicy...), nil
+	record, found, err := store.GetRecord(ctx, workspaceID, workflowPolicyRecordID)
+	if err != nil || !found {
+		return nil, err
+	}
+	return policyFromBody(record.Body)
 }
 
 func (p *Plugin) savePolicy(ctx context.Context, workspaceID string, policy []WorkflowPolicy) error {
 	available, err := p.availablePolicySteps(ctx, workspaceID)
 	if err != nil {
 		return err
+	}
+	previous, err := p.policy(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	previousByKey := make(map[string]WorkflowPolicy, len(previous))
+	for _, selected := range previous {
+		previousByKey[selected.WorkflowID+"/"+selected.WorkstepID] = selected
 	}
 	seen := make(map[string]struct{}, len(policy))
 	for index, selected := range policy {
@@ -81,17 +97,65 @@ func (p *Plugin) savePolicy(ctx context.Context, workspaceID string, policy []Wo
 		if _, duplicate := seen[key]; duplicate {
 			return fmt.Errorf("policy selection %q is duplicated", key)
 		}
-		if _, found := available[key]; !found {
+		if _, found := available[key]; !found && previousByKey[key] == (WorkflowPolicy{}) {
 			return fmt.Errorf("policy selection %q is not an available workflow step", key)
 		}
 		seen[key] = struct{}{}
 		policy[index] = selected
 	}
-	_, err = p.updateDocument(ctx, workspaceID, func(doc *workspaceDocument) error {
-		doc.WorkflowPolicy = append([]WorkflowPolicy(nil), policy...)
-		return nil
-	})
+	store, err := p.durablePolicyStore(ctx)
+	if err != nil {
+		return err
+	}
+	token, err := store.AcquireLease(ctx, workspaceID, "coordinator-policy")
+	if err != nil {
+		return err
+	}
+	body := policyBody(policy)
+	_, found, err := store.GetRecord(ctx, workspaceID, workflowPolicyRecordID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		_, err = store.AppendAdd(ctx, workspaceID, token, workflowPolicyRecordID, durablestate.KindFollowUp, body, durablestate.StorageInline)
+	} else {
+		_, err = store.AppendUpdate(ctx, workspaceID, token, workflowPolicyRecordID, body, durablestate.StorageInline)
+	}
 	return err
+}
+
+func policyBody(policy []WorkflowPolicy) map[string]any {
+	items := make([]any, 0, len(policy))
+	for _, selected := range policy {
+		items = append(items, map[string]any{"workflow_id": selected.WorkflowID, "workstep_id": selected.WorkstepID, "prompt": selected.Prompt})
+	}
+	return map[string]any{"selections": items}
+}
+
+func policyFromBody(body map[string]any) ([]WorkflowPolicy, error) {
+	raw, found := body["selections"]
+	if !found {
+		return nil, nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("durable workflow policy has invalid selections")
+	}
+	policy := make([]WorkflowPolicy, 0, len(items))
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("durable workflow policy has invalid selection")
+		}
+		workflowID, workflowOK := item["workflow_id"].(string)
+		workstepID, workstepOK := item["workstep_id"].(string)
+		prompt, _ := item["prompt"].(string)
+		if !workflowOK || !workstepOK {
+			return nil, fmt.Errorf("durable workflow policy selection requires IDs")
+		}
+		policy = append(policy, WorkflowPolicy{WorkflowID: workflowID, WorkstepID: workstepID, Prompt: prompt})
+	}
+	return policy, nil
 }
 
 func (p *Plugin) availablePolicySteps(ctx context.Context, workspaceID string) (map[string]struct{}, error) {

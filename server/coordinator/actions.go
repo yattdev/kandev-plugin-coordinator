@@ -69,6 +69,9 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 			trigger = TriggerStandup
 		}
 		result, err := p.RunManual(ctx, workspaceID, trigger, input.IdempotencyKey)
+		if errors.Is(err, ErrMonitoringConfigurationRequired) {
+			return actionJSON(map[string]any{"status": "configuration_required", "error": err.Error()})
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -109,6 +112,10 @@ func (p *Plugin) handleStatusAction(ctx context.Context, workspaceID string) (*p
 	message := ""
 	if err := config.ReadyForRun(); err != nil {
 		status, message = "configuration_required", err.Error()
+	} else if checks, checksErr := p.selectedChecks(ctx, workspaceID); checksErr != nil {
+		status, message = "error", checksErr.Error()
+	} else if len(checks) == 0 {
+		status, message = "configuration_required", ErrMonitoringConfigurationRequired.Error()
 	} else if _, err := ensureConversation(ctx, p.manager, workspaceID, config); errors.Is(err, ErrConversationCapabilityUnavailable) {
 		status, message = "unavailable", err.Error()
 	} else if errors.Is(err, ErrConversationConfigurationRequired) {

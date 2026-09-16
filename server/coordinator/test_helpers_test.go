@@ -2,11 +2,25 @@ package coordinator
 
 import (
 	"context"
+	"path/filepath"
 	"strconv"
 	"sync"
+	"testing"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
+	"github.com/stretchr/testify/require"
+
+	"kandev-plugin-coordinator/server/durablestate"
 )
+
+func installTestPolicyStore(t *testing.T, plugin *Plugin) {
+	t.Helper()
+	store, err := durablestate.Open(filepath.Join(t.TempDir(), "coordinator-policy.db"))
+	require.NoError(t, err)
+	require.NoError(t, store.Migrate(context.Background()))
+	plugin.policyStore = store
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+}
 
 type fakeHost struct {
 	pluginsdk.UnimplementedHostData

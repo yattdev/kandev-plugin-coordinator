@@ -23,6 +23,7 @@ func TestSelectedChecksUsePluginOwnedWorkflowPolicy(t *testing.T) {
 		{ID: "step-b", WorkflowID: "workflow-b", Name: "Review"},
 	}
 	plugin := New()
+	installTestPolicyStore(t, plugin)
 	plugin.UnimplementedPlugin.SetHost(host)
 	require.NoError(t, plugin.savePolicy(context.Background(), "workspace-1", []WorkflowPolicy{
 		{WorkflowID: "workflow-b", WorkstepID: "step-b"},
@@ -36,7 +37,10 @@ func TestSelectedChecksUsePluginOwnedWorkflowPolicy(t *testing.T) {
 		{WorkflowID: "workflow-b", WorkflowName: "Beta", WorkstepID: "step-b", WorkstepName: "Review"},
 	}, checks)
 	_, found := host.state[stateMapKey("workspace", "workspace-1", stateKeyV2)]
-	require.True(t, found, "the policy is persisted under plugin-owned workspace state")
+	require.False(t, found, "workflow policy must not use Host state")
+	_, found, err = plugin.policyStore.GetRecord(context.Background(), "workspace-1", workflowPolicyRecordID)
+	require.NoError(t, err)
+	require.True(t, found, "the policy is persisted in plugin-owned SQLite")
 }
 
 func TestSelectedChecksFollowWorkflowPagination(t *testing.T) {
@@ -49,6 +53,7 @@ func TestSelectedChecksFollowWorkflowPagination(t *testing.T) {
 		ID: "step-last", WorkflowID: "workflow-100", Name: "Last",
 	}}
 	plugin := New()
+	installTestPolicyStore(t, plugin)
 	plugin.UnimplementedPlugin.SetHost(host)
 	require.NoError(t, plugin.savePolicy(context.Background(), "workspace-1", []WorkflowPolicy{{WorkflowID: "workflow-100", WorkstepID: "step-last"}}))
 	checks, err := plugin.selectedChecks(context.Background(), "workspace-1")
@@ -63,11 +68,12 @@ func TestWorkflowPolicyPersistsAcrossPluginRestartAndIsWorkspaceScoped(t *testin
 	host.steps["workflow-1"] = []pluginsdk.WorkflowStep{{ID: "step-1", WorkflowID: "workflow-1", Name: "Work"}}
 	host.steps["workflow-2"] = []pluginsdk.WorkflowStep{{ID: "step-2", WorkflowID: "workflow-2", Name: "Review"}}
 	first := New()
+	installTestPolicyStore(t, first)
 	first.UnimplementedPlugin.SetHost(host)
 	require.NoError(t, first.savePolicy(context.Background(), "workspace-1", []WorkflowPolicy{{WorkflowID: "workflow-1", WorkstepID: "step-1", Prompt: "first"}}))
 	require.NoError(t, first.savePolicy(context.Background(), "workspace-2", []WorkflowPolicy{{WorkflowID: "workflow-2", WorkstepID: "step-2", Prompt: "second"}}))
 
-	restarted := New()
+	restarted := NewWithPolicyStore(first.policyStore)
 	restarted.UnimplementedPlugin.SetHost(host)
 	checks, err := restarted.selectedChecks(context.Background(), "workspace-1")
 	require.NoError(t, err)
@@ -82,6 +88,7 @@ func TestDeletedPolicySelectionRemainsSavedButIsUnavailable(t *testing.T) {
 	host.workflows = []pluginsdk.Workflow{{ID: "workflow-1", WorkspaceID: "workspace-1", Name: "One"}}
 	host.steps["workflow-1"] = []pluginsdk.WorkflowStep{{ID: "step-1", WorkflowID: "workflow-1", Name: "Work"}}
 	plugin := New()
+	installTestPolicyStore(t, plugin)
 	plugin.UnimplementedPlugin.SetHost(host)
 	require.NoError(t, plugin.savePolicy(context.Background(), "workspace-1", []WorkflowPolicy{{WorkflowID: "workflow-1", WorkstepID: "step-1"}}))
 	host.steps["workflow-1"] = nil
@@ -91,4 +98,5 @@ func TestDeletedPolicySelectionRemainsSavedButIsUnavailable(t *testing.T) {
 	policy, err := plugin.policy(context.Background(), "workspace-1")
 	require.NoError(t, err)
 	require.Len(t, policy, 1)
+	require.NoError(t, plugin.savePolicy(context.Background(), "workspace-1", policy), "an operator may re-save an unavailable existing selection")
 }
