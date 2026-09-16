@@ -77,7 +77,7 @@ export type CoordinatorRegistry = {
     label: string;
     description: string;
     icon?: string;
-    Component: Component<{ workspaceId?: string }>;
+    Component: Component;
   }): void;
 };
 

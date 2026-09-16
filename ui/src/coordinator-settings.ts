@@ -7,7 +7,7 @@ import type { CoordinatorHost, WorkflowPolicy } from "./contracts";
 export function createCoordinatorSettings(host: CoordinatorHost) {
   const React = host.React;
   const h = React.createElement;
-  return function CoordinatorSettings({ workspaceId }: { workspaceId?: string }) {
+  return function CoordinatorSettings({ workspaceId }: { workspaceId?: string } = {}) {
     const [value, setValue] = React.useState("[]");
     const [message, setMessage] = React.useState("");
     React.useEffect(() => {
