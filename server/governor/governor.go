@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -91,14 +92,15 @@ type Attention struct {
 	Tier   Tier   `json:"tier"`
 }
 type Digest struct {
-	SchemaVersion  string      `json:"schema_version"`
-	WorkspaceID    string      `json:"workspace_id"`
-	Complete       bool        `json:"complete"`
-	Provenance     string      `json:"provenance"`
-	Changed        int         `json:"changed"`
-	Omitted        int         `json:"omitted"`
-	OmittedTaskIDs []string    `json:"omitted_task_ids,omitempty"`
-	Attention      []Attention `json:"attention"`
+	SchemaVersion       string      `json:"schema_version"`
+	WorkspaceID         string      `json:"workspace_id"`
+	Complete            bool        `json:"complete"`
+	Provenance          string      `json:"provenance"`
+	Changed             int         `json:"changed"`
+	Omitted             int         `json:"omitted"`
+	OmittedTaskIDs      []string    `json:"omitted_task_ids,omitempty"`
+	OmittedContinuation string      `json:"omitted_continuation,omitempty"`
+	Attention           []Attention `json:"attention"`
 }
 type Result struct {
 	Duplicate           bool     `json:"duplicate"`
@@ -155,6 +157,7 @@ type SolRecovery struct {
 	Status                                                                                                     string
 	Accepted                                                                                                   bool
 	CompletedAt, EffectDueAt                                                                                   time.Time
+	AffectedTaskIDs                                                                                            []string
 }
 type Store struct {
 	Durable *durablestate.Store
@@ -431,9 +434,9 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 		if st.Recoveries == nil {
 			st.Recoveries = map[string]SolRecovery{}
 		}
-		key := r.IncidentID + "/" + fmt.Sprint(r.StrategyVersion)
+		key := r.IncidentID + "/" + fmt.Sprint(r.StrategyVersion) + "/" + fmt.Sprint(r.PlanVersion)
 		if old, ok := st.Recoveries[key]; ok {
-			if old.RequestID == r.RequestID && old == r {
+			if old.RequestID == r.RequestID && reflect.DeepEqual(old, r) {
 				return errNoMutation
 			}
 			return ErrStaleContract
@@ -446,7 +449,7 @@ func (s Store) VerifySolRecoveryEffect(ctx context.Context, fence int64, workspa
 	return s.transform(ctx, fence, workspace, func(st *state) error {
 		for k, r := range st.Recoveries {
 			if r.IncidentID == incident {
-				if evidence == "" || r.EffectEvidenceID != "" || st.Last.EvidenceID != evidence {
+				if evidence == "" || r.EffectEvidenceID != "" || st.Last.EvidenceID != evidence || !st.Last.Complete || st.Last.EventID == r.EventID || !st.Last.ObservedAt.After(r.CompletedAt) || st.Last.StrategyVersion != r.StrategyVersion || st.Last.PlanVersion != r.PlanVersion {
 					return ErrStaleContract
 				}
 				r.EffectEvidenceID = evidence
@@ -506,10 +509,7 @@ func boundDigest(d *Digest, max int) error {
 		if len(raw) <= max {
 			return nil
 		}
-		removed := d.Attention[len(d.Attention)-1]
-		if removed.TaskID != "" {
-			d.OmittedTaskIDs = append(d.OmittedTaskIDs, removed.TaskID)
-		}
+		d.OmittedContinuation = "observation-attention"
 		d.Attention = d.Attention[:len(d.Attention)-1]
 		d.Omitted++
 	}
@@ -635,6 +635,34 @@ func (s Store) ValidateCurrentContract(ctx context.Context, workspace, task, hea
 	}
 	c, ok := st.Contracts[task]
 	if !ok || c.StrategyVersion != strategyVersion || c.PlanVersion != planVersion || ValidateContract(c, workspace, task, head, generation, now) != nil {
+		return Contract{}, ErrStaleContract
+	}
+	return c, nil
+}
+
+// ValidateProposedAction is the advisory action-boundary guard.  The Host
+// remains responsible for enforcing the returned decision before any action.
+func (s Store) ValidateProposedAction(ctx context.Context, workspace, task, head, generation string, strategyVersion, planVersion int, action string, now time.Time) (Contract, error) {
+	c, err := s.ValidateCurrentContract(ctx, workspace, task, head, generation, strategyVersion, planVersion, now)
+	if err != nil {
+		return Contract{}, err
+	}
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return Contract{}, ErrStaleContract
+	}
+	allowed := false
+	for _, a := range c.AllowedActions {
+		if strings.TrimSpace(a) == action {
+			allowed = true
+		}
+	}
+	for _, a := range c.ProhibitedActions {
+		if strings.TrimSpace(a) == action {
+			return Contract{}, ErrStaleContract
+		}
+	}
+	if !allowed {
 		return Contract{}, ErrStaleContract
 	}
 	return c, nil
