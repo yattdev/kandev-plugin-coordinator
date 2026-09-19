@@ -8,6 +8,7 @@ import (
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
 	"kandev-plugin-coordinator/server/governor"
+	"kandev-plugin-coordinator/server/durablestate"
 )
 
 type Plugin struct {
@@ -21,7 +22,11 @@ type Plugin struct {
 	runnerMu        sync.Mutex
 	runnerCancel    context.CancelFunc
 	runnerDone      chan struct{}
+<<<<<<< HEAD
 	shadowObserver  ShadowObserver
+	policyMu        sync.Mutex
+	policyStore     *durablestate.Store
+	policyStorePath string
 }
 
 // ShadowObserver is the explicit, opt-in observation boundary for the shadow
@@ -40,7 +45,16 @@ var (
 	_ pluginsdk.AgentToolPlugin = (*Plugin)(nil)
 )
 
-func New() *Plugin { return &Plugin{nowFn: time.Now, tickInterval: time.Minute} }
+func New() *Plugin {
+	return &Plugin{nowFn: time.Now, tickInterval: time.Minute, policyStorePath: "coordinator-policy.db"}
+}
+
+// NewWithPolicyStore injects a task-local durable store for tests and embeds.
+func NewWithPolicyStore(store *durablestate.Store) *Plugin {
+	p := New()
+	p.policyStore = store
+	return p
+}
 
 func NewWithConversationManager(manager ConversationManager) *Plugin {
 	p := New()
@@ -105,6 +119,31 @@ func (p *Plugin) Close() {
 	if done != nil {
 		<-done
 	}
+	p.policyMu.Lock()
+	store := p.policyStore
+	p.policyStore = nil
+	p.policyMu.Unlock()
+	if store != nil {
+		_ = store.Close()
+	}
+}
+
+func (p *Plugin) durablePolicyStore(ctx context.Context) (*durablestate.Store, error) {
+	p.policyMu.Lock()
+	defer p.policyMu.Unlock()
+	if p.policyStore != nil {
+		return p.policyStore, nil
+	}
+	store, err := durablestate.Open(p.policyStorePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.Migrate(ctx); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	p.policyStore = store
+	return store, nil
 }
 
 func (p *Plugin) config(ctx context.Context) (Config, error) {

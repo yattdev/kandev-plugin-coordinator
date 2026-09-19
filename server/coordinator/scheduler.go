@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// ErrMonitoringConfigurationRequired means no saved policy currently resolves
+// to a Host workflow step. It is an operator-visible disabled state, never a
+// failed dispatch.
+var ErrMonitoringConfigurationRequired = errors.New("monitoring configuration is required")
+
 func (p *Plugin) RunDue(ctx context.Context, now time.Time) error {
 	config, err := p.config(ctx)
 	if err != nil {
@@ -36,6 +41,13 @@ func (p *Plugin) RunDue(ctx context.Context, now time.Time) error {
 }
 
 func (p *Plugin) runWorkspaceDue(ctx context.Context, workspaceID string, config Config, now time.Time) error {
+	checks, err := p.selectedChecks(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	if len(checks) == 0 {
+		return nil
+	}
 	state, err := p.readState(ctx, workspaceID)
 	if err != nil {
 		return err
@@ -76,6 +88,13 @@ func (p *Plugin) RunManual(ctx context.Context, workspaceID, trigger, idempotenc
 	if err := config.ReadyForRun(); err != nil {
 		return DispatchResult{}, err
 	}
+	checks, err := p.selectedChecks(ctx, workspaceID)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+	if len(checks) == 0 {
+		return DispatchResult{}, ErrMonitoringConfigurationRequired
+	}
 	key := fmt.Sprintf("manual/%s/%s/%s", workspaceID, trigger, idempotencyKey)
 	return p.dispatchAndRecord(ctx, workspaceID, config, trigger, key, p.now(), false)
 }
@@ -93,6 +112,9 @@ func validateManualKey(idempotencyKey string) error {
 func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, config Config, trigger, occurrenceKey string, now time.Time, scheduled bool) (DispatchResult, error) {
 	started := time.Now()
 	result, promptBytes, dispatchErr := p.dispatchOccurrence(ctx, workspaceID, config, trigger, occurrenceKey)
+	if errors.Is(dispatchErr, ErrMonitoringConfigurationRequired) {
+		return result, dispatchErr
+	}
 	statusValue := result.Status
 	if dispatchErr != nil {
 		statusValue = "failed"
@@ -148,7 +170,7 @@ func (p *Plugin) dispatchOccurrence(ctx context.Context, workspaceID string, con
 		return DispatchResult{}, nil, err
 	}
 	if len(checks) == 0 {
-		return DispatchResult{}, nil, fmt.Errorf("no workflow steps are configured for monitoring")
+		return DispatchResult{}, nil, ErrMonitoringConfigurationRequired
 	}
 	if _, err := ensureConversation(ctx, p.manager, workspaceID, config); err != nil {
 		return DispatchResult{}, nil, err

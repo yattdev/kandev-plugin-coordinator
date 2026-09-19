@@ -16,7 +16,9 @@ Development and CI currently pin Kandev commit
 - durable atomic occurrence idempotency and busy-session coalescing;
 - effective workspace default agent-profile resolution before conversation
   creation;
-- persisted workflow-step `coordinator_monitored` and `coordinator_prompt`;
+- generic read-only workspace/workflow and workflow-step readers;
+- the host-owned `registerIntegrationSettings` UI contribution for
+  workspace-scoped plugin settings;
 - the host-owned `host.ui.WorkspaceAgentChat` component.
 
 No released Kandev tag contains that commit yet (`v0.89.0-76-gff9b8b8ec` as
@@ -38,11 +40,13 @@ every 45 minutes from 08:00 through 18:00. Monitoring cycles arm only after the
 first successful daily dispatch. Manual cycle and standup actions work before
 arming and use caller-specific idempotency keys.
 
-Workflow settings are the only monitoring-policy source. The plugin reads the
-host-owned monitored flag and optional multiline prompt on each workflow step;
-it persists no shadow policy. Each occurrence batches selected steps in a
-deterministic order and appends fixed safety invariants after all editable
-content.
+Each workspace's Integration settings own its monitoring selections and
+optional per-step prompts. The plugin validates saved IDs through generic Host
+workflow/step readers; a deleted selection remains visible in saved policy but
+is unavailable for dispatch. An empty or fully unavailable selection makes
+manual and scheduled runs configuration-required. Each occurrence batches
+available selected steps in a deterministic order and appends fixed safety
+invariants after all editable content.
 
 ## State, lifecycle, and security
 

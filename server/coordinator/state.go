@@ -84,6 +84,15 @@ type CoordinatorState struct {
 	DispatchTelemetry []DispatchTelemetry             `json:"dispatch_telemetry"`
 }
 
+// WorkflowPolicy is stored as a versioned durable-state record. Workflow and
+// step names are not persisted: Host readers remain authoritative for
+// presentation and availability.
+type WorkflowPolicy struct {
+	WorkflowID string `json:"workflow_id"`
+	WorkstepID string `json:"workstep_id"`
+	Prompt     string `json:"prompt,omitempty"`
+}
+
 type PublishedState struct {
 	ActiveFlags   []ActiveFlag                    `json:"active_flags"`
 	TaskSnapshots map[string]TaskActivitySnapshot `json:"task_snapshots"`

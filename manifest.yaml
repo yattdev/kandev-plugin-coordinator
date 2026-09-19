@@ -40,6 +40,9 @@ actions:
   - key: "coordinator.run-standup"
     scope: "workspace"
     max_body_bytes: 4096
+  - key: "coordinator.policy"
+    scope: "workspace"
+    max_body_bytes: 65536
 
 agent_tools:
   - name: get_coordinator_state

@@ -19,6 +19,7 @@ const (
 	ActionRunCycle      = "coordinator.run-cycle"
 	ActionRunStandup    = "coordinator.run-standup"
 	ActionShadowObserve = "coordinator.shadow-observe"
+	ActionPolicy        = "coordinator.policy"
 )
 
 func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {
@@ -95,10 +96,31 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 			trigger = TriggerStandup
 		}
 		result, err := p.RunManual(ctx, workspaceID, trigger, input.IdempotencyKey)
+		if errors.Is(err, ErrMonitoringConfigurationRequired) {
+			return actionJSON(map[string]any{"status": "configuration_required", "error": err.Error()})
+		}
 		if err != nil {
 			return nil, err
 		}
 		return actionJSON(map[string]any{"dispatch": result})
+	case ActionPolicy:
+		if len(req.Body) == 0 {
+			policy, err := p.policy(ctx, workspaceID)
+			if err != nil {
+				return nil, err
+			}
+			return actionJSON(map[string]any{"selections": policy})
+		}
+		var input struct {
+			Selections []WorkflowPolicy `json:"selections"`
+		}
+		if err := json.Unmarshal(req.Body, &input); err != nil {
+			return nil, fmt.Errorf("coordinator: decoding policy request: %w", err)
+		}
+		if err := p.savePolicy(ctx, workspaceID, input.Selections); err != nil {
+			return nil, err
+		}
+		return actionJSON(map[string]any{"selections": input.Selections})
 	default:
 		return nil, fmt.Errorf("coordinator: unknown action %q", req.ActionKey)
 	}
@@ -117,6 +139,10 @@ func (p *Plugin) handleStatusAction(ctx context.Context, workspaceID string) (*p
 	message := ""
 	if err := config.ReadyForRun(); err != nil {
 		status, message = "configuration_required", err.Error()
+	} else if checks, checksErr := p.selectedChecks(ctx, workspaceID); checksErr != nil {
+		status, message = "error", checksErr.Error()
+	} else if len(checks) == 0 {
+		status, message = "configuration_required", ErrMonitoringConfigurationRequired.Error()
 	} else if _, err := ensureConversation(ctx, p.manager, workspaceID, config); errors.Is(err, ErrConversationCapabilityUnavailable) {
 		status, message = "unavailable", err.Error()
 	} else if errors.Is(err, ErrConversationConfigurationRequired) {
