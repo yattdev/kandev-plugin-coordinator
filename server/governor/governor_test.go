@@ -182,7 +182,7 @@ func TestMissingOrRecurringSolEffectEscalatesAstraAndReplayIsIdempotent(t *testi
 	o.ObservedAt = time.Date(2026, 9, 19, 16, 0, 0, 0, time.UTC)
 	_, err := s.Observe(ctx, 0, o)
 	require.NoError(t, err)
-	r := SolRecovery{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "r", ProposedAction: "reproduce", ExpectedEffect: "test passes", ActualModel: TierSol, ActualModelReceipt: "trusted", Status: "decision_accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Minute)}
+	r := SolRecovery{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "r", ReceiptID: "receipt-accepted", ProposedAction: "reproduce", ExpectedEffect: "test passes", ActualModel: TierSol, ActualModelReceipt: "trusted", Status: "decision_accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Minute)}
 	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
 	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
 	o.EventID = "sol-next"
@@ -192,6 +192,21 @@ func TestMissingOrRecurringSolEffectEscalatesAstraAndReplayIsIdempotent(t *testi
 	require.NoError(t, err)
 	require.Equal(t, TierAstra, result.Decision)
 	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
+}
+
+func TestRecoveryUsesStableRequestAndDistinctReceiptIdentity(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	o := observation("transition", true)
+	_, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	r := SolRecovery{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "request", ReceiptID: "requested", ActualModel: TierSol, ActualModelReceipt: "actual", Status: "requested", StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	r.Status = "started"
+	r.ReceiptID = "started"
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	r.ActualModelReceipt = "altered"
+	require.ErrorIs(t, s.RecordSolRecovery(ctx, 0, "w", r), ErrStaleContract)
 }
 func observation(id string, complete bool) Observation {
 	return Observation{SchemaVersion: SchemaVersion, WorkspaceID: "w", ObservedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), EventID: id, Provenance: "normalized_snapshot", Complete: complete, StrategyVersion: 1, PlanVersion: 1, EvidenceID: "evidence-" + id, Tasks: []Task{{ID: "t", Lane: "work", State: "active"}}}

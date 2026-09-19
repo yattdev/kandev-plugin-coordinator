@@ -151,15 +151,15 @@ type state struct {
 	Recoveries     map[string]SolRecovery `json:"recoveries,omitempty"`
 }
 type SolRecovery struct {
-	IncidentID, EventID, EvidenceID, RequestID, ProposedAction, ExpectedEffect, EffectEvidenceID, RecurrenceID string
-	StrategyVersion, PlanVersion                                                                               int
-	ActualModel                                                                                                Tier
-	Status                                                                                                     string
-	Accepted                                                                                                   bool
-	CompletedAt, EffectDueAt                                                                                   time.Time
-	AffectedTaskIDs                                                                                            []string
-	ActualModelReceipt                                                                                         string
-	EffectVerifiedAt                                                                                           time.Time
+	IncidentID, EventID, EvidenceID, RequestID, ReceiptID, ProposedAction, ExpectedEffect, EffectEvidenceID, RecurrenceID string
+	StrategyVersion, PlanVersion                                                                                          int
+	ActualModel                                                                                                           Tier
+	Status                                                                                                                string
+	Accepted                                                                                                              bool
+	CompletedAt, EffectDueAt                                                                                              time.Time
+	AffectedTaskIDs                                                                                                       []string
+	ActualModelReceipt                                                                                                    string
+	EffectVerifiedAt                                                                                                      time.Time
 }
 type Store struct {
 	Durable *durablestate.Store
@@ -430,7 +430,7 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 	if s.Now != nil {
 		now = s.Now()
 	}
-	if r.IncidentID == "" || r.EventID == "" || r.EvidenceID == "" || r.RequestID == "" || r.ActualModelReceipt == "" || r.ActualModel != TierSol || r.CompletedAt.After(now) || !validRecoveryStatus(r.Status) {
+	if r.IncidentID == "" || r.EventID == "" || r.EvidenceID == "" || r.RequestID == "" || r.ReceiptID == "" || r.ActualModelReceipt == "" || r.ActualModel != TierSol || r.CompletedAt.After(now) || !validRecoveryStatus(r.Status) {
 		return fmt.Errorf("shadow governor: invalid Sol recovery")
 	}
 	if r.Status == "decision_accepted" && (r.ProposedAction == "" || r.ExpectedEffect == "" || !r.Accepted || r.EffectDueAt.Before(r.CompletedAt)) {
@@ -448,7 +448,7 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 			if old.RequestID == r.RequestID && reflect.DeepEqual(old, r) {
 				return errNoMutation
 			}
-			if old.RequestID != r.RequestID || !validRecoveryTransition(old.Status, r.Status) {
+			if old.RequestID != r.RequestID || old.ReceiptID == r.ReceiptID || !validRecoveryTransition(old.Status, r.Status) {
 				return ErrStaleContract
 			}
 			if r.EffectDueAt.IsZero() {
