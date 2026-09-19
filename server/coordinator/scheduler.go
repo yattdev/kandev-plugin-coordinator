@@ -91,7 +91,8 @@ func validateManualKey(idempotencyKey string) error {
 }
 
 func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, config Config, trigger, occurrenceKey string, now time.Time, scheduled bool) (DispatchResult, error) {
-	result, dispatchErr := p.dispatchOccurrence(ctx, workspaceID, config, trigger, occurrenceKey)
+	started := time.Now()
+	result, promptBytes, dispatchErr := p.dispatchOccurrence(ctx, workspaceID, config, trigger, occurrenceKey)
 	statusValue := result.Status
 	if dispatchErr != nil {
 		statusValue = "failed"
@@ -124,6 +125,15 @@ func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, conf
 				OccurrenceKey: occurrenceKey,
 			}}, doc.Reports...)
 		}
+		telemetry := DispatchTelemetry{OccurrenceKey: occurrenceKey, WakeReason: trigger, Outcome: statusValue, DurationMS: time.Since(started).Milliseconds(), PromptBytes: promptBytes, At: now.UTC().Format(time.RFC3339Nano)}
+		if config.AgentProfile != "" {
+			profile := config.AgentProfile
+			telemetry.RequestedProfile = &profile
+		}
+		doc.State.DispatchTelemetry = append([]DispatchTelemetry{telemetry}, doc.State.DispatchTelemetry...)
+		if len(doc.State.DispatchTelemetry) > MaxDispatchTelemetry {
+			doc.State.DispatchTelemetry = doc.State.DispatchTelemetry[:MaxDispatchTelemetry]
+		}
 		return nil
 	})
 	if dispatchErr != nil {
@@ -132,26 +142,27 @@ func (p *Plugin) dispatchAndRecord(ctx context.Context, workspaceID string, conf
 	return result, stateErr
 }
 
-func (p *Plugin) dispatchOccurrence(ctx context.Context, workspaceID string, config Config, trigger, occurrenceKey string) (DispatchResult, error) {
+func (p *Plugin) dispatchOccurrence(ctx context.Context, workspaceID string, config Config, trigger, occurrenceKey string) (DispatchResult, *int, error) {
 	checks, err := p.selectedChecks(ctx, workspaceID)
 	if err != nil {
-		return DispatchResult{}, err
+		return DispatchResult{}, nil, err
 	}
 	if len(checks) == 0 {
-		return DispatchResult{}, fmt.Errorf("no workflow steps are configured for monitoring")
+		return DispatchResult{}, nil, fmt.Errorf("no workflow steps are configured for monitoring")
 	}
 	if _, err := ensureConversation(ctx, p.manager, workspaceID, config); err != nil {
-		return DispatchResult{}, err
+		return DispatchResult{}, nil, err
 	}
 	prompt := ComposeOccurrencePrompt(config.BasePrompt, checks, trigger, config.ReportTemplate)
+	promptSize := len([]byte(prompt))
 	result, err := p.manager.Dispatch(ctx, DispatchRequest{WorkspaceID: workspaceID, Key: ConversationKey, OccurrenceKey: occurrenceKey, Prompt: prompt})
 	if err != nil {
-		return DispatchResult{}, err
+		return DispatchResult{}, &promptSize, err
 	}
 	if result.OccurrenceKey == "" {
 		result.OccurrenceKey = occurrenceKey
 	}
-	return result, nil
+	return result, &promptSize, nil
 }
 
 func dailyOccurrence(workspaceID string, now time.Time, config Config) (key, localDate string, due bool, err error) {

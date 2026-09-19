@@ -29,7 +29,8 @@ future recommendations for extraction and bounded execution; the current
 workflow profile is authoritative.
 
 The default active health watchdog is three hours (clamped to one through 24
-hours). Digests are ordered and carry provenance, completeness, changed count,
+hours). It is a strategic-only review recommendation and never replaces the
+existing operational monitoring cadence. Digests are ordered and carry provenance, completeness, changed count,
 and reason codes. Cost fields are intentionally absent: the snapshot format has
 no Host usage or price feed, so this pilot makes no savings claim.
 
@@ -39,3 +40,11 @@ This is a stale-plan guard for future adapters, not authority to execute an
 action. Roll back by removing the observer wiring; durable checkpoints are
 isolated under the `shadow_governor` record kind and do not affect scheduler
 records.
+
+The existing scheduler records bounded dispatch telemetry at its own
+`dispatchAndRecord` boundary: occurrence/wake, requested profile, outcome,
+duration, and prompt bytes. Effective profile, token counts, cached usage, and
+priced cost are nullable because the current Host interface does not provide
+authoritative values. The historical `SafetyInvariants` still contains
+one-task-per-cycle and no-Done restrictions; this pilot documents that policy
+divergence and does not rewrite it.
