@@ -26,19 +26,26 @@ func TestConcurrentTransformsPreserveObservationsContractsAndReviewBaseline(t *t
 	ctx := context.Background()
 	a, b := observation("a", true), observation("b", true)
 	var wg sync.WaitGroup
+	errs := make(chan error, 4)
 	for _, o := range []Observation{a, b} {
 		wg.Add(1)
-		go func(o Observation) { defer wg.Done(); _, err := s.Observe(ctx, 0, o); require.NoError(t, err) }(o)
+		go func(o Observation) { defer wg.Done(); _, err := s.Observe(ctx, 0, o); errs <- err }(o)
 	}
 	wg.Wait()
+	for i := 0; i < 2; i++ {
+		require.NoError(t, <-errs)
+	}
 	c := Contract{StrategyVersion: 1, PlanVersion: 1, WorkspaceID: "w", TaskID: "other", Goal: "finish", NextAction: "test", ExecutorTier: TierTerra, Head: "h", Generation: "g", ExpiresAt: time.Now().Add(time.Hour), AllowedActions: []string{"test"}, CompletionConditions: []string{"pass"}}
 	wg.Add(2)
-	go func() { defer wg.Done(); _, err := s.PutContract(ctx, 0, 0, c); require.NoError(t, err) }()
+	go func() { defer wg.Done(); _, err := s.PutContract(ctx, 0, 0, c); errs <- err }()
 	go func() {
 		defer wg.Done()
-		require.NoError(t, s.AcknowledgeStrategy(ctx, 0, "w", "b", b.ObservedAt.Add(time.Second)))
+		errs <- s.AcknowledgeStrategy(ctx, 0, "w", StrategyReceipt{EventID: "b", RequestID: "r", IncidentID: "i", EvidenceID: b.EvidenceID, Model: TierAstra, Outcome: "completed", Accepted: true, StrategyVersion: 1, PlanVersion: 1, ExpectedEffect: "effect", EffectDueAt: b.ObservedAt.Add(time.Hour), CompletedAt: b.ObservedAt.Add(time.Second)})
 	}()
 	wg.Wait()
+	for i := 0; i < 2; i++ {
+		require.NoError(t, <-errs)
+	}
 	r, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -78,7 +85,7 @@ func TestOutcomeAgeRoutesAstraDespiteActivityAndDigestNeverDropsLastAttention(t 
 	s := testStore(t)
 	o := observation("one", true)
 	due := o.ObservedAt.Add(-time.Minute)
-	o.Tasks = []Task{{ID: "a", State: "active", EvidenceDueAt: due, ActivityAt: o.ObservedAt, LastProgress: due.Add(-time.Minute)}, {ID: "b", State: "active", EvidenceDueAt: due, ActivityAt: o.ObservedAt, LastProgress: due.Add(-time.Minute)}}
+	o.Tasks = []Task{{ID: "a", State: "active", EvidenceDueAt: due, ActivityAt: o.ObservedAt}, {ID: "b", State: "active", EvidenceDueAt: due, ActivityAt: o.ObservedAt}}
 	_, err := s.Observe(context.Background(), 0, o)
 	require.NoError(t, err)
 	o.EventID = "two"
@@ -131,8 +138,38 @@ func TestDigestBoundsCountEveryOmission(t *testing.T) {
 	require.NoError(t, boundDigest(&d, len(full)-20))
 	require.Equal(t, 1, d.Omitted)
 }
+
+func TestReceiptRejectsUnverifiedReviewWithoutWatermark(t *testing.T) {
+	s := testStore(t)
+	o := observation("review", true)
+	_, err := s.Observe(context.Background(), 0, o)
+	require.NoError(t, err)
+	err = s.AcknowledgeStrategy(context.Background(), 0, "w", StrategyReceipt{EventID: o.EventID, RequestID: "r", IncidentID: "i", EvidenceID: o.EvidenceID, Model: TierSol, Outcome: "completed", Accepted: true, StrategyVersion: 1, PlanVersion: 1, ExpectedEffect: "x", EffectDueAt: o.ObservedAt.Add(time.Hour), CompletedAt: o.ObservedAt.Add(time.Minute)})
+	require.Error(t, err)
+	r, ok, err := s.Durable.GetRecord(context.Background(), "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	raw, _ := json.Marshal(r.Body)
+	var st state
+	require.NoError(t, json.Unmarshal(raw, &st))
+	require.True(t, st.StrategyAt.IsZero())
+}
+
+func TestRoutingHonorsAllTierPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		tier Tier
+		want Tier
+	}{{TierLuna, TierLuna}, {TierTerra, TierTerra}} {
+		s := testStore(t)
+		o := observation("tier-"+string(tc.tier), true)
+		o.Tasks[0].ExecutorTier = tc.tier
+		r, err := s.Observe(context.Background(), 0, o)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, r.Decision)
+	}
+}
 func observation(id string, complete bool) Observation {
-	return Observation{SchemaVersion: SchemaVersion, WorkspaceID: "w", ObservedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), EventID: id, Provenance: "normalized_snapshot", Complete: complete, Tasks: []Task{{ID: "t", Lane: "work", State: "active"}}}
+	return Observation{SchemaVersion: SchemaVersion, WorkspaceID: "w", ObservedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), EventID: id, Provenance: "normalized_snapshot", Complete: complete, StrategyVersion: 1, PlanVersion: 1, EvidenceID: "evidence-" + id, Tasks: []Task{{ID: "t", Lane: "work", State: "active"}}}
 }
 func TestObserveIsAdvisoryAndReplaySafe(t *testing.T) {
 	s := testStore(t)

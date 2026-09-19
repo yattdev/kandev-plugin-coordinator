@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
-	"kandev-plugin-coordinator/server/governor"
 	"kandev-plugin-coordinator/server/durablestate"
+	"kandev-plugin-coordinator/server/governor"
 )
 
 type Plugin struct {
@@ -22,7 +22,6 @@ type Plugin struct {
 	runnerMu        sync.Mutex
 	runnerCancel    context.CancelFunc
 	runnerDone      chan struct{}
-<<<<<<< HEAD
 	shadowObserver  ShadowObserver
 	policyMu        sync.Mutex
 	policyStore     *durablestate.Store

@@ -45,24 +45,45 @@ type Task struct {
 	// Activity is deliberately separate from progress.  Callers may record
 	// moves and messages here, but only verified outcome evidence advances
 	// LastProgress.
-	ActivityAt       time.Time     `json:"activity_at,omitempty"`
-	EvidenceDueAt    time.Time     `json:"evidence_due_at,omitempty"`
-	VerifiedEvidence string        `json:"verified_evidence,omitempty"`
-	ExternalWait     *ExternalWait `json:"external_wait,omitempty"`
-	ExecutorTier     Tier          `json:"executor_tier,omitempty"`
+	ActivityAt          time.Time     `json:"activity_at,omitempty"`
+	EvidenceDueAt       time.Time     `json:"evidence_due_at,omitempty"`
+	VerifiedEvidence    string        `json:"verified_evidence,omitempty"`
+	ProgressHead        string        `json:"progress_head,omitempty"`
+	ProgressPlanVersion int           `json:"progress_plan_version,omitempty"`
+	Verifier            string        `json:"verifier,omitempty"`
+	Milestone           string        `json:"milestone,omitempty"`
+	ExternalWait        *ExternalWait `json:"external_wait,omitempty"`
+	ExecutorTier        Tier          `json:"executor_tier,omitempty"`
 }
 type ExternalWait struct {
 	Source, Owner, Trigger, Fallback string
 	ExpiresAt                        time.Time `json:"expires_at"`
 }
 type Observation struct {
-	SchemaVersion string    `json:"schema_version"`
-	WorkspaceID   string    `json:"workspace_id"`
-	ObservedAt    time.Time `json:"observed_at"`
-	EventID       string    `json:"event_id"`
-	Provenance    string    `json:"provenance"`
-	Complete      bool      `json:"complete"`
-	Tasks         []Task    `json:"tasks"`
+	SchemaVersion   string    `json:"schema_version"`
+	WorkspaceID     string    `json:"workspace_id"`
+	ObservedAt      time.Time `json:"observed_at"`
+	EventID         string    `json:"event_id"`
+	Provenance      string    `json:"provenance"`
+	Complete        bool      `json:"complete"`
+	StrategyVersion int       `json:"strategy_version"`
+	PlanVersion     int       `json:"plan_version"`
+	EvidenceID      string    `json:"evidence_id"`
+	Tasks           []Task    `json:"tasks"`
+}
+
+// StrategyReceipt is evidence of a successful Astra review.  It is separate
+// from a helper's start/completion receipt so failures and unknown outcomes can
+// never advance the strategic watermark.
+type StrategyReceipt struct {
+	EventID, RequestID, IncidentID, EvidenceID string
+	Model                                      Tier
+	DirectAstraPrimary                         bool
+	Outcome                                    string
+	Accepted                                   bool
+	StrategyVersion, PlanVersion               int
+	ExpectedEffect                             string
+	EffectDueAt, CompletedAt                   time.Time
 }
 type Attention struct {
 	TaskID string `json:"task_id,omitempty"`
@@ -123,6 +144,7 @@ type state struct {
 	EventBodies    map[string]string      `json:"event_bodies,omitempty"`
 	Observations   map[string]Observation `json:"observations,omitempty"`
 	ReviewBaseline Observation            `json:"review_baseline,omitempty"`
+	OverdueTasks   map[string]bool        `json:"overdue_tasks,omitempty"`
 }
 type Store struct {
 	Durable *durablestate.Store
@@ -175,6 +197,7 @@ func (s Store) Observe(ctx context.Context, fence int64, in Observation) (Result
 		st.Results[in.EventID] = out
 		st.EventBodies[in.EventID] = string(bodyHash)
 		st.Observations[in.EventID] = in
+		st.OverdueTasks = actionableOverdue(in)
 		if len(st.Events) > 128 {
 			stale := st.Events[0]
 			st.Events = st.Events[1:]
@@ -299,6 +322,14 @@ func validate(in Observation, c Config) error {
 			return fmt.Errorf("shadow governor: task IDs must be non-empty and unique")
 		}
 		seen[t.ID] = true
+		if !t.LastProgress.IsZero() {
+			if t.LastProgress.After(in.ObservedAt) || t.VerifiedEvidence == "" || t.ProgressHead == "" || t.ProgressPlanVersion < 1 || t.Verifier == "" || t.Milestone == "" {
+				return fmt.Errorf("shadow governor: last_progress requires current verified evidence")
+			}
+			if (t.Head != "" && t.ProgressHead != t.Head) || (t.PlanVersion > 0 && t.ProgressPlanVersion != t.PlanVersion) {
+				return fmt.Errorf("shadow governor: progress evidence does not match task generation")
+			}
+		}
 	}
 	return nil
 }
@@ -331,7 +362,7 @@ func evaluate(old state, in Observation, c Config) (Result, error) {
 	}
 	if !in.Complete {
 		d.Attention = []Attention{{Reason: "incomplete_observation", Tier: TierAstra}}
-		return result(d, []string{"unknown_evidence"}), nil
+		return finalizedResult(d, []string{"unknown_evidence"}, c)
 	}
 	blocked := 0
 	overdue := 0
@@ -356,7 +387,13 @@ func evaluate(old state, in Observation, c Config) (Result, error) {
 	if blocked > 1 {
 		d.Attention = append(d.Attention, Attention{Reason: "multiple_blocked", Tier: TierAstra})
 	}
-	if overdue >= 2 && old.Last.Complete && old.LastHasOverdue() {
+	sharedOverdue := 0
+	for id := range actionableOverdue(in) {
+		if old.OverdueTasks[id] {
+			sharedOverdue++
+		}
+	}
+	if overdue >= 2 && old.Last.Complete && sharedOverdue >= 2 {
 		d.Attention = append(d.Attention, Attention{Reason: "overdue_cohort", Tier: TierAstra})
 	}
 	if !old.StrategyAt.IsZero() && in.ObservedAt.Before(old.StrategyAt) {
@@ -365,15 +402,32 @@ func evaluate(old state, in Observation, c Config) (Result, error) {
 	if !old.BaselineAt.IsZero() && len(in.Tasks) > 0 && in.ObservedAt.Sub(old.StrategyAtOrBaseline()) >= c.Watchdog {
 		d.Attention = append(d.Attention, Attention{Reason: "active_watchdog", Tier: TierAstra})
 	}
-	r := result(d, nil)
+	return finalizedResult(d, nil, c)
+}
+
+func finalizedResult(d Digest, base []string, c Config) (Result, error) {
+	r := result(d, base)
+	decision, reasons := r.Decision, r.Reasons
 	if err := boundDigest(&r.Digest, c.MaxDigestBytes); err != nil {
 		return Result{}, err
 	}
-	r = result(r.Digest, r.Reasons)
+	if r.Digest.Omitted > 0 {
+		reasons = append(reasons, "digest_omitted")
+	}
+	r.Decision, r.Reasons = decision, uniqueStrings(reasons)
 	return r, nil
 }
 func provenExternalWait(w *ExternalWait, at time.Time) bool {
 	return w != nil && w.Source != "" && w.Owner != "" && w.Trigger != "" && w.Fallback != "" && w.ExpiresAt.After(at)
+}
+func actionableOverdue(in Observation) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range in.Tasks {
+		if !t.EvidenceDueAt.IsZero() && !t.LastProgress.After(t.EvidenceDueAt) && in.ObservedAt.After(t.EvidenceDueAt) && !provenExternalWait(t.ExternalWait, in.ObservedAt) {
+			out[t.ID] = true
+		}
+	}
+	return out
 }
 func (s state) LastHasOverdue() bool {
 	for _, t := range s.Last.Tasks {
@@ -411,39 +465,68 @@ func (s state) StrategyAtOrBaseline() time.Time {
 
 // AcknowledgeStrategy is the only operation allowed to advance the strategic
 // watermark after a successful external review receipt.
-func (s Store) AcknowledgeStrategy(ctx context.Context, fence int64, workspace, eventID string, at time.Time) error {
+func (s Store) AcknowledgeStrategy(ctx context.Context, fence int64, workspace string, receipt StrategyReceipt) error {
 	return s.transform(ctx, fence, workspace, func(st *state) error {
-		obs, ok := st.Observations[eventID]
+		obs, ok := st.Observations[receipt.EventID]
 		if !ok {
 			return fmt.Errorf("shadow governor: unknown review event")
 		}
-		if !obs.Complete || at.Before(obs.ObservedAt) {
+		if !validReceipt(receipt, obs) {
 			return fmt.Errorf("shadow governor: ineligible review event")
 		}
-		if at.Before(st.StrategyAt) {
+		if receipt.CompletedAt.Before(st.StrategyAt) {
 			return ErrStaleContract
 		}
-		st.StrategyAt = at
+		st.StrategyAt = receipt.CompletedAt
 		st.BaselineAt = obs.ObservedAt
 		st.ReviewBaseline = obs
 		return nil
 	})
+}
+func validReceipt(r StrategyReceipt, obs Observation) bool {
+	if r.EventID == "" || r.RequestID == "" || r.IncidentID == "" || r.EvidenceID == "" || r.ExpectedEffect == "" || r.EffectDueAt.IsZero() || r.CompletedAt.IsZero() || r.Outcome != "completed" || !r.Accepted || (!r.DirectAstraPrimary && r.Model != TierAstra) {
+		return false
+	}
+	return obs.Complete && r.CompletedAt.After(obs.ObservedAt) && !r.EffectDueAt.Before(r.CompletedAt) && r.StrategyVersion == obs.StrategyVersion && r.PlanVersion == obs.PlanVersion && r.EvidenceID == obs.EvidenceID
 }
 func result(d Digest, base []string) Result {
 	sort.Slice(d.Attention, func(i, j int) bool {
 		return d.Attention[i].TaskID+d.Attention[i].Reason < d.Attention[j].TaskID+d.Attention[j].Reason
 	})
 	tier := TierNone
-	reasons := base
+	reasons := append([]string(nil), base...)
 	for _, a := range d.Attention {
 		reasons = append(reasons, a.Reason)
-		if a.Tier == TierAstra {
-			tier = TierAstra
-		} else if tier != TierAstra && a.Tier == TierSol {
-			tier = TierSol
+		if tierPriority(a.Tier) > tierPriority(tier) {
+			tier = a.Tier
 		}
 	}
-	return Result{Decision: tier, Reasons: reasons, Digest: d, LiveBoardCollection: "unavailable: normalized snapshot supplied by caller"}
+	return Result{Decision: tier, Reasons: uniqueStrings(reasons), Digest: d, LiveBoardCollection: "unavailable: normalized snapshot supplied by caller"}
+}
+func tierPriority(t Tier) int {
+	switch t {
+	case TierAstra:
+		return 4
+	case TierSol:
+		return 3
+	case TierTerra:
+		return 2
+	case TierLuna:
+		return 1
+	default:
+		return 0
+	}
+}
+func uniqueStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 type Contract struct {
@@ -461,6 +544,10 @@ type Contract struct {
 	EscalationConditions []string  `json:"escalation_conditions"`
 	Head                 string    `json:"head"`
 	Generation           string    `json:"generation"`
+	Owner                string    `json:"owner"`
+	EvidenceDueAt        time.Time `json:"evidence_due_at"`
+	BlockerRoot          string    `json:"blocker_root"`
+	ReassessAt           time.Time `json:"reassess_at"`
 	ExpiresAt            time.Time `json:"expires_at"`
 }
 
@@ -486,7 +573,7 @@ func (s Store) ValidateCurrentContract(ctx context.Context, workspace, task, hea
 	return c, nil
 }
 func validateContractShape(c Contract) error {
-	if c.Version < 0 || c.StrategyVersion < 1 || c.PlanVersion < 1 || c.WorkspaceID == "" || c.TaskID == "" || c.Head == "" || c.Generation == "" || c.Goal == "" || c.NextAction == "" || c.ExpiresAt.IsZero() {
+	if c.Version < 0 || c.StrategyVersion < 1 || c.PlanVersion < 1 || c.WorkspaceID == "" || c.TaskID == "" || c.Head == "" || c.Generation == "" || c.Goal == "" || c.NextAction == "" || c.ExpiresAt.IsZero() || !c.ExpiresAt.After(time.Now()) {
 		return ErrStaleContract
 	}
 	switch c.ExecutorTier {

@@ -61,6 +61,18 @@ func TestShadowObservationActionIsOptInAndWorkspaceBound(t *testing.T) {
 	require.Equal(t, time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), observer.input.ObservedAt)
 }
 
+func TestShadowObservationUsesOptInDurableRuntime(t *testing.T) {
+	host := newFakeHost()
+	host.config = map[string]any{"shadow_governor_enabled": true}
+	plugin := New()
+	installTestPolicyStore(t, plugin)
+	plugin.UnimplementedPlugin.SetHost(host)
+	body := []byte(`{"schema_version":"shadow-governor/v1","workspace_id":"workspace-1","observed_at":"2026-01-19T12:00:00Z","event_id":"event-1","provenance":"fixture","complete":true,"strategy_version":1,"plan_version":1,"evidence_id":"e1","tasks":[]}`)
+	response, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{ActionKey: ActionShadowObserve, Context: pluginsdk.VerifiedActionContext{WorkspaceID: "workspace-1"}, Body: body})
+	require.NoError(t, err)
+	require.Contains(t, string(response.Body), `"status":"shadow"`)
+}
+
 func TestEnsureActionReturnsTypedConfigurationState(t *testing.T) {
 	manager := &fakeSDKConversationManager{ensureState: "configuration_required"}
 	host := newFakeHost()

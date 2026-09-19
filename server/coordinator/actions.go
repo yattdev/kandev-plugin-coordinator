@@ -47,7 +47,25 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 	case ActionStatus:
 		return p.handleStatusAction(ctx, workspaceID)
 	case ActionShadowObserve:
-		if p.shadowObserver == nil {
+		observer := p.shadowObserver
+		if observer == nil {
+			config, err := p.config(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if config.ShadowGovernorEnabled {
+				store, err := p.durablePolicyStore(ctx)
+				if err != nil {
+					return nil, err
+				}
+				fence, err := store.AcquireLease(ctx, workspaceID, "shadow-governor")
+				if err != nil {
+					return nil, err
+				}
+				observer = ShadowStoreObserver{Store: &governor.Store{Durable: store}, Fence: fence}
+			}
+		}
+		if observer == nil {
 			return actionJSON(map[string]any{"status": "unavailable", "reason": "shadow governor is opt-in and live board collection is unavailable; supply a normalized snapshot through a configured observer"})
 		}
 		var input governor.Observation
@@ -64,7 +82,7 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 		if input.WorkspaceID != workspaceID {
 			return nil, fmt.Errorf("coordinator: shadow observation workspace does not match verified context")
 		}
-		result, err := p.shadowObserver.Observe(ctx, input)
+		result, err := observer.Observe(ctx, input)
 		if err != nil {
 			return nil, err
 		}
