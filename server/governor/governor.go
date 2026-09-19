@@ -162,6 +162,14 @@ type SolRecovery struct {
 	ActualModelReceipt                                                                                                    string
 	EffectVerifiedAt                                                                                                      time.Time
 }
+
+// RecoveryEffectReceipt binds effect evidence to the current normalized
+// observation; it is trusted adapter identity, not a cryptographic claim.
+type RecoveryEffectReceipt struct {
+	IncidentID, EventID, EvidenceID, TaskID, Head, Verifier, Milestone string
+	StrategyVersion, PlanVersion                                       int
+	ObservedAt                                                         time.Time
+}
 type Store struct {
 	Durable *durablestate.Store
 	Now     func() time.Time
@@ -517,6 +525,41 @@ func (s Store) RecordSolRecurrence(ctx context.Context, fence int64, workspace, 
 				st.Recoveries[k] = r
 				return nil
 			}
+		}
+		return ErrStaleContract
+	})
+}
+func (s Store) VerifySolRecoveryEffectReceipt(ctx context.Context, fence int64, workspace string, receipt RecoveryEffectReceipt) error {
+	return s.transform(ctx, fence, workspace, func(st *state) error {
+		if receipt.IncidentID == "" || receipt.EventID != st.Last.EventID || receipt.EvidenceID != st.Last.EvidenceID || !st.Last.Complete || receipt.Verifier == "" || receipt.Milestone == "" {
+			return ErrStaleContract
+		}
+		for k, r := range st.Recoveries {
+			if r.IncidentID != receipt.IncidentID {
+				continue
+			}
+			if r.Status != "decision_accepted" || r.EffectEvidenceID != "" || !st.Last.ObservedAt.After(r.CompletedAt) || receipt.StrategyVersion != r.StrategyVersion || receipt.PlanVersion != r.PlanVersion {
+				return ErrStaleContract
+			}
+			found := false
+			for _, id := range r.AffectedTaskIDs {
+				if id == receipt.TaskID {
+					found = true
+				}
+			}
+			if !found {
+				return ErrStaleContract
+			}
+			for _, t := range st.Last.Tasks {
+				if t.ID == receipt.TaskID && t.Head == receipt.Head && t.PlanVersion == receipt.PlanVersion {
+					r.EffectEvidenceID = receipt.EvidenceID
+					r.EffectVerifiedAt = st.Last.ObservedAt
+					r.Status = "effect_verified"
+					st.Recoveries[k] = r
+					return nil
+				}
+			}
+			return ErrStaleContract
 		}
 		return ErrStaleContract
 	})
