@@ -71,6 +71,8 @@ func TestRecoveryRecurrenceRequiresLatestMatchingCompleteEvidence(t *testing.T) 
 	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", RecoveryEffectReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "v", Milestone: "m"}))
 	err = s.RecordSolRecurrenceReceipt(ctx, 0, "w", RecoveryRecurrenceReceipt{IncidentID: "incident", EventID: "wrong", EvidenceID: o.EvidenceID, StrategyVersion: 1, PlanVersion: 1, RecurrenceID: "r", ReceiptID: "wrong", ObservedAt: o.ObservedAt})
 	require.ErrorIs(t, err, ErrStaleContract)
+	err = s.RecordSolRecurrenceReceipt(ctx, 0, "w", RecoveryRecurrenceReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, StrategyVersion: 2, PlanVersion: 1, RecurrenceID: "r", ReceiptID: "wrong-generation", ObservedAt: o.ObservedAt})
+	require.ErrorIs(t, err, ErrStaleContract)
 	err = s.RecordSolRecurrenceReceipt(ctx, 0, "w", RecoveryRecurrenceReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, StrategyVersion: 1, PlanVersion: 1, RecurrenceID: "r", ReceiptID: "same", ObservedAt: o.ObservedAt})
 	require.ErrorIs(t, err, ErrStaleContract)
 	o.EventID = "recurrence"
