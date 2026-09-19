@@ -496,8 +496,20 @@ func validRecoveryTransition(old, next string) bool {
 }
 func (s Store) VerifySolRecoveryEffect(ctx context.Context, fence int64, workspace, incident, evidence string) error {
 	return s.transform(ctx, fence, workspace, func(st *state) error {
+		var matches []string
 		for k, r := range st.Recoveries {
 			if r.IncidentID == incident {
+				matches = append(matches, k)
+			}
+		}
+		// This legacy shorthand has no task/head/plan/milestone binding. Refuse
+		// ambiguity instead of selecting whichever map iteration happens first;
+		// callers needing proof must use VerifySolRecoveryEffectReceipt.
+		if len(matches) != 1 {
+			return ErrStaleContract
+		}
+		for k, r := range st.Recoveries {
+			if k == matches[0] {
 				if evidence == "" || r.EffectEvidenceID != "" || st.Last.EvidenceID != evidence || !st.Last.Complete || st.Last.EventID == r.EventID || !st.Last.ObservedAt.After(r.CompletedAt) || st.Last.StrategyVersion != r.StrategyVersion || st.Last.PlanVersion != r.PlanVersion {
 					return ErrStaleContract
 				}
