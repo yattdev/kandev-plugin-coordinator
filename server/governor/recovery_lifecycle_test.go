@@ -2,6 +2,7 @@ package governor
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -127,10 +128,24 @@ func TestRecoveryRecurrenceReceiptReplaySurvivesReopen(t *testing.T) {
 	o.ObservedAt = now.Add(-time.Minute)
 	_, err = s.Observe(ctx, 0, o)
 	require.NoError(t, err)
+	beforeRec, ok, err := d.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	before, _ := json.Marshal(beforeRec.Body)
 	require.NoError(t, s.RecordSolRecurrenceReceipt(ctx, 0, "w", receipt))
+	afterReplay, ok, err := d.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	after, _ := json.Marshal(afterReplay.Body)
+	require.JSONEq(t, string(before), string(after))
 	altered := receipt
 	altered.RecurrenceID = "changed"
 	require.ErrorIs(t, s.RecordSolRecurrenceReceipt(ctx, 0, "w", altered), ErrStaleContract)
+	afterConflict, ok, err := d.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	conflict, _ := json.Marshal(afterConflict.Body)
+	require.JSONEq(t, string(before), string(conflict))
 	o.EventID = "after"
 	o.EvidenceID = "after-e"
 	o.ObservedAt = now
