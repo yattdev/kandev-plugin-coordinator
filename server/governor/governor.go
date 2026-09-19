@@ -91,13 +91,14 @@ type Attention struct {
 	Tier   Tier   `json:"tier"`
 }
 type Digest struct {
-	SchemaVersion string      `json:"schema_version"`
-	WorkspaceID   string      `json:"workspace_id"`
-	Complete      bool        `json:"complete"`
-	Provenance    string      `json:"provenance"`
-	Changed       int         `json:"changed"`
-	Omitted       int         `json:"omitted"`
-	Attention     []Attention `json:"attention"`
+	SchemaVersion  string      `json:"schema_version"`
+	WorkspaceID    string      `json:"workspace_id"`
+	Complete       bool        `json:"complete"`
+	Provenance     string      `json:"provenance"`
+	Changed        int         `json:"changed"`
+	Omitted        int         `json:"omitted"`
+	OmittedTaskIDs []string    `json:"omitted_task_ids,omitempty"`
+	Attention      []Attention `json:"attention"`
 }
 type Result struct {
 	Duplicate           bool     `json:"duplicate"`
@@ -323,7 +324,7 @@ func validate(in Observation, c Config) error {
 		}
 		seen[t.ID] = true
 		if !t.LastProgress.IsZero() {
-			if t.LastProgress.After(in.ObservedAt) || t.VerifiedEvidence == "" || t.ProgressHead == "" || t.ProgressPlanVersion < 1 || t.Verifier == "" || t.Milestone == "" {
+			if t.LastProgress.After(in.ObservedAt) || t.VerifiedEvidence != in.EvidenceID || t.ProgressHead == "" || t.ProgressPlanVersion < 1 || t.Verifier == "" || t.Milestone == "" {
 				return fmt.Errorf("shadow governor: last_progress requires current verified evidence")
 			}
 			if (t.Head != "" && t.ProgressHead != t.Head) || (t.PlanVersion > 0 && t.ProgressPlanVersion != t.PlanVersion) {
@@ -442,10 +443,20 @@ func boundDigest(d *Digest, max int) error {
 	if max < 1 {
 		return ErrDigestTooSmall
 	}
+	sort.SliceStable(d.Attention, func(i, j int) bool {
+		if tierPriority(d.Attention[i].Tier) != tierPriority(d.Attention[j].Tier) {
+			return tierPriority(d.Attention[i].Tier) > tierPriority(d.Attention[j].Tier)
+		}
+		return d.Attention[i].TaskID+d.Attention[i].Reason < d.Attention[j].TaskID+d.Attention[j].Reason
+	})
 	for len(d.Attention) > 1 {
 		raw, _ := json.Marshal(d)
 		if len(raw) <= max {
 			return nil
+		}
+		removed := d.Attention[len(d.Attention)-1]
+		if removed.TaskID != "" {
+			d.OmittedTaskIDs = append(d.OmittedTaskIDs, removed.TaskID)
 		}
 		d.Attention = d.Attention[:len(d.Attention)-1]
 		d.Omitted++
@@ -466,12 +477,16 @@ func (s state) StrategyAtOrBaseline() time.Time {
 // AcknowledgeStrategy is the only operation allowed to advance the strategic
 // watermark after a successful external review receipt.
 func (s Store) AcknowledgeStrategy(ctx context.Context, fence int64, workspace string, receipt StrategyReceipt) error {
+	now := time.Now()
+	if s.Now != nil {
+		now = s.Now()
+	}
 	return s.transform(ctx, fence, workspace, func(st *state) error {
 		obs, ok := st.Observations[receipt.EventID]
 		if !ok {
 			return fmt.Errorf("shadow governor: unknown review event")
 		}
-		if !validReceipt(receipt, obs) {
+		if receipt.EventID != st.Last.EventID || !validReceipt(receipt, obs, now) {
 			return fmt.Errorf("shadow governor: ineligible review event")
 		}
 		if receipt.CompletedAt.Before(st.StrategyAt) {
@@ -483,11 +498,11 @@ func (s Store) AcknowledgeStrategy(ctx context.Context, fence int64, workspace s
 		return nil
 	})
 }
-func validReceipt(r StrategyReceipt, obs Observation) bool {
-	if r.EventID == "" || r.RequestID == "" || r.IncidentID == "" || r.EvidenceID == "" || r.ExpectedEffect == "" || r.EffectDueAt.IsZero() || r.CompletedAt.IsZero() || r.Outcome != "completed" || !r.Accepted || (!r.DirectAstraPrimary && r.Model != TierAstra) {
+func validReceipt(r StrategyReceipt, obs Observation, now time.Time) bool {
+	if r.EventID == "" || r.RequestID == "" || r.IncidentID == "" || r.EvidenceID == "" || r.ExpectedEffect == "" || r.EffectDueAt.IsZero() || r.CompletedAt.IsZero() || r.Outcome != "completed" || !r.Accepted || r.Model != TierAstra || r.CompletedAt.After(now) {
 		return false
 	}
-	return obs.Complete && r.CompletedAt.After(obs.ObservedAt) && !r.EffectDueAt.Before(r.CompletedAt) && r.StrategyVersion == obs.StrategyVersion && r.PlanVersion == obs.PlanVersion && r.EvidenceID == obs.EvidenceID
+	return obs.Complete && r.CompletedAt.After(obs.ObservedAt) && !r.EffectDueAt.Before(r.CompletedAt) && r.EffectDueAt.Before(r.CompletedAt.Add(31*24*time.Hour)) && r.StrategyVersion == obs.StrategyVersion && r.PlanVersion == obs.PlanVersion && r.EvidenceID == obs.EvidenceID
 }
 func result(d Digest, base []string) Result {
 	sort.Slice(d.Attention, func(i, j int) bool {
