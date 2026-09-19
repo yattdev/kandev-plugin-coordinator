@@ -284,3 +284,75 @@ func TestRejectedRecoveryTransitionsLeaveDurableStateUntouched(t *testing.T) {
 		require.Equal(t, r, st.RecoveryReceipts["started"])
 	})
 }
+
+func TestRecoveryTransitionReceiptReplayAfterNewerObservationIsImmutable(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	o := observation("origin", true)
+	o.Tasks = []Task{{ID: "t", Head: "h", PlanVersion: 1, State: "active"}}
+	_, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	r := SolRecovery{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "request", ReceiptID: "requested", ActualModel: TierSol, ActualModelReceipt: "actual", Status: "requested", StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, AffectedTaskIDs: []string{"t"}}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	r.Status, r.ReceiptID = "started", "started"
+	started := r
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	r.Status, r.ReceiptID = "completed", "completed"
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	r.Status, r.ReceiptID, r.Accepted = "decision_accepted", "accepted", true
+	r.ProposedAction, r.ExpectedEffect, r.EffectDueAt = "run", "pass", o.ObservedAt.Add(time.Hour)
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	next := o
+	next.EventID, next.EvidenceID = "newer", "newer-evidence"
+	next.ObservedAt = o.ObservedAt.Add(time.Minute)
+	_, err = s.Observe(ctx, 0, next)
+	require.NoError(t, err)
+	before, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	beforeBody, err := json.Marshal(before.Body)
+	require.NoError(t, err)
+	beforeLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+	beforeState, _, err := s.load(ctx, "w")
+	require.NoError(t, err)
+	beforeRecovery := beforeState.Recoveries["incident/1/1"]
+	beforeLedger := beforeState.RecoveryReceipts
+
+	// RED: the pre-fix code rejects this because Last is newer than started.
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", started))
+	afterReplay, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	afterReplayBody, err := json.Marshal(afterReplay.Body)
+	require.NoError(t, err)
+	afterReplayLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+	afterReplayState, _, err := s.load(ctx, "w")
+	require.NoError(t, err)
+	require.Equal(t, before.SHA256, afterReplay.SHA256)
+	require.Equal(t, before.UpdatedAt, afterReplay.UpdatedAt)
+	require.JSONEq(t, string(beforeBody), string(afterReplayBody))
+	require.Equal(t, beforeLog, afterReplayLog)
+	require.Equal(t, beforeRecovery, afterReplayState.Recoveries["incident/1/1"])
+	require.Equal(t, beforeLedger, afterReplayState.RecoveryReceipts)
+
+	altered := started
+	altered.ExpectedEffect = "altered"
+	require.ErrorIs(t, s.RecordSolRecovery(ctx, 0, "w", altered), ErrStaleContract)
+	afterConflict, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	afterConflictBody, err := json.Marshal(afterConflict.Body)
+	require.NoError(t, err)
+	afterConflictLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+	afterConflictState, _, err := s.load(ctx, "w")
+	require.NoError(t, err)
+	require.Equal(t, before.SHA256, afterConflict.SHA256)
+	require.Equal(t, before.UpdatedAt, afterConflict.UpdatedAt)
+	require.JSONEq(t, string(beforeBody), string(afterConflictBody))
+	require.Equal(t, beforeLog, afterConflictLog)
+	require.Equal(t, beforeRecovery, afterConflictState.Recoveries["incident/1/1"])
+	require.Equal(t, beforeLedger, afterConflictState.RecoveryReceipts)
+}

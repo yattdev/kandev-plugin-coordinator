@@ -454,9 +454,6 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 		return fmt.Errorf("shadow governor: invalid accepted Sol recovery")
 	}
 	return s.transform(ctx, fence, workspace, func(st *state) error {
-		if st.Last.EventID != r.EventID || st.Last.EvidenceID != r.EvidenceID || st.Last.StrategyVersion != r.StrategyVersion || st.Last.PlanVersion != r.PlanVersion {
-			return ErrStaleContract
-		}
 		if st.Recoveries == nil {
 			st.Recoveries = map[string]SolRecovery{}
 		}
@@ -467,6 +464,12 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 			if reflect.DeepEqual(prior, r) {
 				return errNoMutation
 			}
+			return ErrStaleContract
+		}
+		// A known immutable transition receipt is a lost-response replay, so it
+		// remains a no-op even after later observations have advanced Last.
+		// Fresh receipts remain bound to the current normalized observation.
+		if st.Last.EventID != r.EventID || st.Last.EvidenceID != r.EvidenceID || st.Last.StrategyVersion != r.StrategyVersion || st.Last.PlanVersion != r.PlanVersion {
 			return ErrStaleContract
 		}
 		key := r.IncidentID + "/" + fmt.Sprint(r.StrategyVersion) + "/" + fmt.Sprint(r.PlanVersion)
