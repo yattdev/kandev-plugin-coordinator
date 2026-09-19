@@ -138,18 +138,19 @@ func (c Config) normalized() Config {
 }
 
 type state struct {
-	Last             Observation            `json:"last"`
-	StrategyAt       time.Time              `json:"strategy_at"`
-	Events           []string               `json:"events"`
-	Contracts        map[string]Contract    `json:"contracts,omitempty"`
-	BaselineAt       time.Time              `json:"baseline_at,omitempty"`
-	Results          map[string]Result      `json:"results,omitempty"`
-	EventBodies      map[string]string      `json:"event_bodies,omitempty"`
-	Observations     map[string]Observation `json:"observations,omitempty"`
-	ReviewBaseline   Observation            `json:"review_baseline,omitempty"`
-	OverdueTasks     map[string]bool        `json:"overdue_tasks,omitempty"`
-	Recoveries       map[string]SolRecovery `json:"recoveries,omitempty"`
-	RecoveryReceipts map[string]SolRecovery `json:"recovery_receipts,omitempty"`
+	Last               Observation                          `json:"last"`
+	StrategyAt         time.Time                            `json:"strategy_at"`
+	Events             []string                             `json:"events"`
+	Contracts          map[string]Contract                  `json:"contracts,omitempty"`
+	BaselineAt         time.Time                            `json:"baseline_at,omitempty"`
+	Results            map[string]Result                    `json:"results,omitempty"`
+	EventBodies        map[string]string                    `json:"event_bodies,omitempty"`
+	Observations       map[string]Observation               `json:"observations,omitempty"`
+	ReviewBaseline     Observation                          `json:"review_baseline,omitempty"`
+	OverdueTasks       map[string]bool                      `json:"overdue_tasks,omitempty"`
+	Recoveries         map[string]SolRecovery               `json:"recoveries,omitempty"`
+	RecoveryReceipts   map[string]SolRecovery               `json:"recovery_receipts,omitempty"`
+	RecurrenceReceipts map[string]RecoveryRecurrenceReceipt `json:"recurrence_receipts,omitempty"`
 }
 type SolRecovery struct {
 	IncidentID, EventID, EvidenceID, RequestID, ReceiptID, ProposedAction, ExpectedEffect, EffectEvidenceID, RecurrenceID string
@@ -171,8 +172,9 @@ type RecoveryEffectReceipt struct {
 	ObservedAt                                                         time.Time
 }
 type RecoveryRecurrenceReceipt struct {
-	IncidentID, EventID, EvidenceID, RecurrenceID string
-	StrategyVersion, PlanVersion                  int
+	IncidentID, EventID, EvidenceID, RecurrenceID, ReceiptID string
+	StrategyVersion, PlanVersion                             int
+	ObservedAt                                               time.Time
 }
 type Store struct {
 	Durable *durablestate.Store
@@ -547,20 +549,30 @@ func (s Store) RecordSolRecurrence(ctx context.Context, fence int64, workspace, 
 }
 func (s Store) RecordSolRecurrenceReceipt(ctx context.Context, fence int64, workspace string, receipt RecoveryRecurrenceReceipt) error {
 	return s.transform(ctx, fence, workspace, func(st *state) error {
+		if st.RecurrenceReceipts == nil {
+			st.RecurrenceReceipts = map[string]RecoveryRecurrenceReceipt{}
+		}
+		if old, ok := st.RecurrenceReceipts[receipt.ReceiptID]; ok {
+			if reflect.DeepEqual(old, receipt) {
+				return errNoMutation
+			}
+			return ErrStaleContract
+		}
 		if receipt.IncidentID == "" || receipt.RecurrenceID == "" || !st.Last.Complete || receipt.EventID != st.Last.EventID || receipt.EvidenceID != st.Last.EvidenceID {
 			return ErrStaleContract
 		}
-		for k, r := range st.Recoveries {
-			if r.IncidentID == receipt.IncidentID {
-				if r.Status != "effect_verified" || r.RecurrenceID != "" || r.StrategyVersion != receipt.StrategyVersion || r.PlanVersion != receipt.PlanVersion || !st.Last.ObservedAt.After(r.EffectVerifiedAt) {
-					return ErrStaleContract
-				}
-				r.RecurrenceID = receipt.RecurrenceID
-				st.Recoveries[k] = r
-				return nil
-			}
+		if receipt.ReceiptID == "" || !receipt.ObservedAt.Equal(st.Last.ObservedAt) {
+			return ErrStaleContract
 		}
-		return ErrStaleContract
+		key := receipt.IncidentID + "/" + fmt.Sprint(receipt.StrategyVersion) + "/" + fmt.Sprint(receipt.PlanVersion)
+		r, ok := st.Recoveries[key]
+		if !ok || r.Status != "effect_verified" || r.RecurrenceID != "" || !st.Last.ObservedAt.After(r.EffectVerifiedAt) {
+			return ErrStaleContract
+		}
+		r.RecurrenceID = receipt.RecurrenceID
+		st.Recoveries[key] = r
+		st.RecurrenceReceipts[receipt.ReceiptID] = receipt
+		return nil
 	})
 }
 func (s Store) VerifySolRecoveryEffectReceipt(ctx context.Context, fence int64, workspace string, receipt RecoveryEffectReceipt) error {
