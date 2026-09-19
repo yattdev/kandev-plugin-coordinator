@@ -1,20 +1,24 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
+	"kandev-plugin-coordinator/server/governor"
 )
 
 const (
-	ActionEnsure     = "coordinator.ensure"
-	ActionStatus     = "coordinator.status"
-	ActionReports    = "coordinator.reports"
-	ActionRunCycle   = "coordinator.run-cycle"
-	ActionRunStandup = "coordinator.run-standup"
+	ActionEnsure        = "coordinator.ensure"
+	ActionStatus        = "coordinator.status"
+	ActionReports       = "coordinator.reports"
+	ActionRunCycle      = "coordinator.run-cycle"
+	ActionRunStandup    = "coordinator.run-standup"
+	ActionShadowObserve = "coordinator.shadow-observe"
 )
 
 func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {
@@ -41,6 +45,29 @@ func (p *Plugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRe
 		return actionJSON(map[string]any{"status": "ready", "conversation": descriptor})
 	case ActionStatus:
 		return p.handleStatusAction(ctx, workspaceID)
+	case ActionShadowObserve:
+		if p.shadowObserver == nil {
+			return actionJSON(map[string]any{"status": "unavailable", "reason": "shadow governor is opt-in and live board collection is unavailable; supply a normalized snapshot through a configured observer"})
+		}
+		var input governor.Observation
+		decoder := json.NewDecoder(bytes.NewReader(req.Body))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			return nil, fmt.Errorf("coordinator: decoding shadow observation: %w", err)
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			return nil, fmt.Errorf("coordinator: shadow observation must contain one JSON value")
+		}
+		// The Host-authenticated workspace is authoritative over the supplied
+		// payload, preventing a caller from checkpointing another workspace.
+		if input.WorkspaceID != workspaceID {
+			return nil, fmt.Errorf("coordinator: shadow observation workspace does not match verified context")
+		}
+		result, err := p.shadowObserver.Observe(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return actionJSON(map[string]any{"status": "shadow", "result": result})
 	case ActionReports:
 		var input struct {
 			Cursor string `json:"cursor"`

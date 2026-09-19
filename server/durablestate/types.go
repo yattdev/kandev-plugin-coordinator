@@ -12,16 +12,21 @@ const (
 	KindDirtyTask   RecordKind = "dirty_task"
 	KindEscalation  RecordKind = "escalation"
 	KindDoneReceipt RecordKind = "done_receipt"
+	// KindShadowGovernor is an opt-in, advisory-only checkpoint owned by the
+	// shadow governor. It is deliberately separate from scheduler records:
+	// its fence protects its SQLite write, not an arbitrary Host worker.
+	KindShadowGovernor RecordKind = "shadow_governor"
 )
 
 // validRecordKinds is used to reject unknown kinds early (fail closed)
 // rather than silently accepting an arbitrary string.
 var validRecordKinds = map[RecordKind]bool{
-	KindFollowUp:    true,
-	KindLease:       true,
-	KindDirtyTask:   true,
-	KindEscalation:  true,
-	KindDoneReceipt: true,
+	KindFollowUp:       true,
+	KindLease:          true,
+	KindDirtyTask:      true,
+	KindEscalation:     true,
+	KindDoneReceipt:    true,
+	KindShadowGovernor: true,
 }
 
 // MutationOp enumerates §1.3's mutation-log operations.
