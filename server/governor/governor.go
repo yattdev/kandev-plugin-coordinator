@@ -138,17 +138,18 @@ func (c Config) normalized() Config {
 }
 
 type state struct {
-	Last           Observation            `json:"last"`
-	StrategyAt     time.Time              `json:"strategy_at"`
-	Events         []string               `json:"events"`
-	Contracts      map[string]Contract    `json:"contracts,omitempty"`
-	BaselineAt     time.Time              `json:"baseline_at,omitempty"`
-	Results        map[string]Result      `json:"results,omitempty"`
-	EventBodies    map[string]string      `json:"event_bodies,omitempty"`
-	Observations   map[string]Observation `json:"observations,omitempty"`
-	ReviewBaseline Observation            `json:"review_baseline,omitempty"`
-	OverdueTasks   map[string]bool        `json:"overdue_tasks,omitempty"`
-	Recoveries     map[string]SolRecovery `json:"recoveries,omitempty"`
+	Last             Observation            `json:"last"`
+	StrategyAt       time.Time              `json:"strategy_at"`
+	Events           []string               `json:"events"`
+	Contracts        map[string]Contract    `json:"contracts,omitempty"`
+	BaselineAt       time.Time              `json:"baseline_at,omitempty"`
+	Results          map[string]Result      `json:"results,omitempty"`
+	EventBodies      map[string]string      `json:"event_bodies,omitempty"`
+	Observations     map[string]Observation `json:"observations,omitempty"`
+	ReviewBaseline   Observation            `json:"review_baseline,omitempty"`
+	OverdueTasks     map[string]bool        `json:"overdue_tasks,omitempty"`
+	Recoveries       map[string]SolRecovery `json:"recoveries,omitempty"`
+	RecoveryReceipts map[string]SolRecovery `json:"recovery_receipts,omitempty"`
 }
 type SolRecovery struct {
 	IncidentID, EventID, EvidenceID, RequestID, ReceiptID, ProposedAction, ExpectedEffect, EffectEvidenceID, RecurrenceID string
@@ -443,6 +444,15 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 		if st.Recoveries == nil {
 			st.Recoveries = map[string]SolRecovery{}
 		}
+		if st.RecoveryReceipts == nil {
+			st.RecoveryReceipts = map[string]SolRecovery{}
+		}
+		if prior, ok := st.RecoveryReceipts[r.ReceiptID]; ok {
+			if reflect.DeepEqual(prior, r) {
+				return errNoMutation
+			}
+			return ErrStaleContract
+		}
 		key := r.IncidentID + "/" + fmt.Sprint(r.StrategyVersion) + "/" + fmt.Sprint(r.PlanVersion)
 		if old, ok := st.Recoveries[key]; ok {
 			if old.RequestID == r.RequestID && reflect.DeepEqual(old, r) {
@@ -451,11 +461,18 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 			if old.RequestID != r.RequestID || old.ReceiptID == r.ReceiptID || !validRecoveryTransition(old.Status, r.Status) {
 				return ErrStaleContract
 			}
+			if old.EventID != r.EventID || old.EvidenceID != r.EvidenceID || old.ActualModel != r.ActualModel || old.ActualModelReceipt != r.ActualModelReceipt || !old.CompletedAt.Equal(r.CompletedAt) {
+				return ErrStaleContract
+			}
 			if r.EffectDueAt.IsZero() {
 				r.EffectDueAt = old.EffectDueAt
 			}
+			if !r.EffectDueAt.Equal(old.EffectDueAt) {
+				return ErrStaleContract
+			}
 		}
 		st.Recoveries[key] = r
+		st.RecoveryReceipts[r.ReceiptID] = r
 		return nil
 	})
 }
