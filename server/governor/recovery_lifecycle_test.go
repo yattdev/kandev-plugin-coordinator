@@ -169,3 +169,61 @@ func TestRecoveryTransitionRejectsAffectedTaskMutation(t *testing.T) {
 	r.Status, r.ReceiptID, r.AffectedTaskIDs = "started", "started", []string{"other"}
 	require.ErrorIs(t, s.RecordSolRecovery(ctx, 0, "w", r), ErrStaleContract)
 }
+
+func TestRejectedRecoveryTransitionsLeaveDurableStateUntouched(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		prepare func(*Store, *Observation, *SolRecovery) error
+	}{
+		{
+			name: "affected task identity mutation",
+			prepare: func(_ *Store, _ *Observation, r *SolRecovery) error {
+				r.AffectedTaskIDs = []string{"other"}
+				return nil
+			},
+		},
+		{
+			name: "future completion",
+			prepare: func(s *Store, _ *Observation, r *SolRecovery) error {
+				r.CompletedAt = s.Now().Add(time.Minute)
+				return nil
+			},
+		},
+		{
+			name: "stale observation",
+			prepare: func(s *Store, o *Observation, r *SolRecovery) error {
+				next := *o
+				next.EventID, next.EvidenceID = "newer", "newer-evidence"
+				next.ObservedAt = o.ObservedAt.Add(time.Minute)
+				_, err := s.Observe(ctx, 0, next)
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testStore(t)
+			o := observation("origin", true)
+			o.Tasks = []Task{{ID: "t", Head: "h", PlanVersion: 1, State: "active"}, {ID: "other", Head: "h2", PlanVersion: 1, State: "active"}}
+			_, err := s.Observe(ctx, 0, o)
+			require.NoError(t, err)
+			r := SolRecovery{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "request", ReceiptID: "requested", ActualModel: TierSol, ActualModelReceipt: "actual", Status: "requested", StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, AffectedTaskIDs: []string{"t"}}
+			require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+			r.Status, r.ReceiptID = "started", "started"
+			require.NoError(t, tc.prepare(&s, &o, &r))
+			before, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+			require.NoError(t, err)
+			require.True(t, ok)
+			beforeBody, err := json.Marshal(before.Body)
+			require.NoError(t, err)
+			require.Error(t, s.RecordSolRecovery(ctx, 0, "w", r))
+			after, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+			require.NoError(t, err)
+			require.True(t, ok)
+			afterBody, err := json.Marshal(after.Body)
+			require.NoError(t, err)
+			require.Equal(t, before.SHA256, after.SHA256)
+			require.JSONEq(t, string(beforeBody), string(afterBody))
+		})
+	}
+}
