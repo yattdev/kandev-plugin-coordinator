@@ -475,7 +475,7 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 			if r.EffectDueAt.IsZero() {
 				r.EffectDueAt = old.EffectDueAt
 			}
-			if !r.EffectDueAt.Equal(old.EffectDueAt) {
+			if !old.EffectDueAt.IsZero() && !r.EffectDueAt.Equal(old.EffectDueAt) {
 				return ErrStaleContract
 			}
 		}
