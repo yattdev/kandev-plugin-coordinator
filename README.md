@@ -82,6 +82,15 @@ gate, queue/receipt, or Done-integrity drift. See
 [`docs/contracts/PROVENANCE.md`](docs/contracts/PROVENANCE.md) for the immutable
 source pin and refresh procedure.
 
+## Advisory shadow governor pilot
+
+The opt-in shadow governor consumes caller-supplied normalized board snapshots
+through `coordinator.shadow-observe`; it does not collect a live board feed.
+It emits deterministic, non-executing attention proposals and persists only its
+own checkpoint in the existing fenced SQLite store. See
+[`docs/shadow-governor.md`](docs/shadow-governor.md) for the versioned input,
+contract guard, metrics limits, and rollout/rollback boundaries.
+
 ## Development
 
 The SDK is currently a sibling checkout because `pkg/pluginsdk` is not a

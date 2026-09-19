@@ -17,6 +17,7 @@ var ErrRecordNotFound = fmt.Errorf("durablestate: record not found")
 // ErrInvalidRecordKind is returned for a RecordKind outside §1.1's fixed
 // enum.
 var ErrInvalidRecordKind = fmt.Errorf("durablestate: invalid record kind")
+var ErrRecordConflict = fmt.Errorf("durablestate: record changed")
 
 // nextMutationID returns the next monotonic mutation_id for workspaceID
 // (1 if none exist yet). Must be called from inside the write transaction
@@ -255,6 +256,52 @@ func (s *Store) AppendUpdate(ctx context.Context, workspaceID string, fencingTok
 		}
 		result = m
 		return nil
+	})
+	return result, err
+}
+
+// CompareAndSwapRecord atomically replaces a record only when its current hash
+// matches expectedSHA. It provides the governor's durable optimistic CAS
+// without exposing SQLite transactions outside this package.
+func (s *Store) CompareAndSwapRecord(ctx context.Context, workspaceID string, fencingToken int64, recordID, expectedSHA string, newBody map[string]any, storage StorageKind) (Mutation, error) {
+	var result Mutation
+	err := s.withWriteTx(ctx, func(tx execer) error {
+		if err := checkFencing(ctx, tx, workspaceID, fencingToken); err != nil {
+			return err
+		}
+		existing, err := readCurrentStateRow(ctx, tx, workspaceID, recordID)
+		if err != nil {
+			return err
+		}
+		if existing == nil {
+			return ErrRecordNotFound
+		}
+		if existing.SHA256 != expectedSHA {
+			return ErrRecordConflict
+		}
+		id, err := nextMutationID(ctx, tx, workspaceID)
+		if err != nil {
+			return err
+		}
+		before := &PayloadSide{Storage: StorageInline, SHA256: existing.SHA256, Body: existing.Body}
+		after, err := buildPayloadSide(ctx, tx, workspaceID, newBody, storage)
+		if err != nil {
+			return err
+		}
+		result = Mutation{MutationID: id, WorkspaceID: workspaceID, Timestamp: nowUTC(), Op: OpUpdate, RecordID: recordID, RecordKind: existing.RecordKind, Before: before, After: after, FencingToken: fencingToken}
+		if err := writeMutationRow(ctx, tx, result); err != nil {
+			return err
+		}
+		encoded, err := marshalBody(newBody)
+		if err != nil {
+			return err
+		}
+		sha, err := canonicalHash(newBody)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE current_state SET body=?, sha256=?, updated_at=? WHERE workspace_id=? AND record_id=?`, encoded, sha, result.Timestamp, workspaceID, recordID)
+		return err
 	})
 	return result, err
 }

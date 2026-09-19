@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	stateKeyV2     = "coordinator_state_v2"
-	legacyStateKey = "coordinator_state"
-	stateVersion   = 2
-	MaxReports     = 200
-	MaxCycleLogs   = 200
-	cycleLogMaxAge = 7 * 24 * time.Hour
+	stateKeyV2           = "coordinator_state_v2"
+	legacyStateKey       = "coordinator_state"
+	stateVersion         = 2
+	MaxReports           = 200
+	MaxCycleLogs         = 200
+	MaxDispatchTelemetry = 200
+	cycleLogMaxAge       = 7 * 24 * time.Hour
 )
 
 type ActiveFlag struct {
@@ -46,6 +47,25 @@ type DispatchStatus struct {
 	Error         string `json:"error,omitempty"`
 }
 
+// DispatchTelemetry is bounded operational evidence. Usage and cost remain
+// nil until the Host supplies authoritative values; prompt bytes are a local
+// measurement, not token or cost accounting.
+type DispatchTelemetry struct {
+	OccurrenceKey    string   `json:"occurrence_key"`
+	WakeReason       string   `json:"wake_reason"`
+	RequestedProfile *string  `json:"requested_profile,omitempty"`
+	EffectiveProfile *string  `json:"effective_profile,omitempty"`
+	Outcome          string   `json:"outcome"`
+	DurationMS       int64    `json:"duration_ms"`
+	PromptBytes      *int     `json:"prompt_bytes,omitempty"`
+	InputTokens      *int     `json:"input_tokens,omitempty"`
+	CachedTokens     *int     `json:"cached_tokens,omitempty"`
+	OutputTokens     *int     `json:"output_tokens,omitempty"`
+	KnownCost        *float64 `json:"known_cost,omitempty"`
+	CostProvenance   *string  `json:"cost_provenance,omitempty"`
+	At               string   `json:"at"`
+}
+
 type ScheduleState struct {
 	Armed            bool           `json:"armed"`
 	LastStandupDate  string         `json:"last_standup_date,omitempty"`
@@ -55,12 +75,13 @@ type ScheduleState struct {
 }
 
 type CoordinatorState struct {
-	ActiveFlags   []ActiveFlag                    `json:"active_flags"`
-	TaskSnapshots map[string]TaskActivitySnapshot `json:"task_snapshots"`
-	Degradations  []string                        `json:"degradations"`
-	LastReportAt  string                          `json:"last_report_at,omitempty"`
-	CycleLogs     []CycleLog                      `json:"cycle_logs"`
-	Schedule      ScheduleState                   `json:"schedule"`
+	ActiveFlags       []ActiveFlag                    `json:"active_flags"`
+	TaskSnapshots     map[string]TaskActivitySnapshot `json:"task_snapshots"`
+	Degradations      []string                        `json:"degradations"`
+	LastReportAt      string                          `json:"last_report_at,omitempty"`
+	CycleLogs         []CycleLog                      `json:"cycle_logs"`
+	Schedule          ScheduleState                   `json:"schedule"`
+	DispatchTelemetry []DispatchTelemetry             `json:"dispatch_telemetry"`
 }
 
 // WorkflowPolicy is stored as a versioned durable-state record. Workflow and
