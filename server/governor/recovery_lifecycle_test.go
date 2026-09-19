@@ -87,3 +87,55 @@ func TestRecoveryRecurrenceRequiresLatestMatchingCompleteEvidence(t *testing.T) 
 	require.Equal(t, TierAstra, result.Decision)
 	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
 }
+
+func TestRecoveryRecurrenceReceiptReplaySurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "replay.db")
+	d, err := durablestate.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Migrate(ctx))
+	now := time.Date(2026, 9, 19, 18, 0, 0, 0, time.UTC)
+	s := Store{Durable: d, Now: func() time.Time { return now }}
+	o := observation("origin", true)
+	o.ObservedAt = now.Add(-2 * time.Hour)
+	o.Tasks = []Task{{ID: "t", Head: "h", PlanVersion: 1, State: "active"}}
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	r := SolRecovery{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "q", ReceiptID: "accepted", ProposedAction: "run", ExpectedEffect: "pass", ActualModel: TierSol, ActualModelReceipt: "actual", Status: "decision_accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: now.Add(time.Hour), AffectedTaskIDs: []string{"t"}}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	o.EventID = "effect"
+	o.EvidenceID = "effect-e"
+	o.ObservedAt = now.Add(-time.Hour)
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", RecoveryEffectReceipt{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "v", Milestone: "m"}))
+	o.EventID = "recurrence"
+	o.EvidenceID = "rec-e"
+	o.ObservedAt = now.Add(-30 * time.Minute)
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	receipt := RecoveryRecurrenceReceipt{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RecurrenceID: "r", ReceiptID: "rec-r", StrategyVersion: 1, PlanVersion: 1, ObservedAt: o.ObservedAt}
+	require.NoError(t, s.RecordSolRecurrenceReceipt(ctx, 0, "w", receipt))
+	require.NoError(t, d.Close())
+	d, err = durablestate.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Migrate(ctx))
+	defer d.Close()
+	s.Durable = d
+	o.EventID = "newer"
+	o.EvidenceID = "new-e"
+	o.ObservedAt = now.Add(-time.Minute)
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	require.NoError(t, s.RecordSolRecurrenceReceipt(ctx, 0, "w", receipt))
+	altered := receipt
+	altered.RecurrenceID = "changed"
+	require.ErrorIs(t, s.RecordSolRecurrenceReceipt(ctx, 0, "w", altered), ErrStaleContract)
+	o.EventID = "after"
+	o.EvidenceID = "after-e"
+	o.ObservedAt = now
+	result, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	require.Equal(t, TierAstra, result.Decision)
+	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
+}
