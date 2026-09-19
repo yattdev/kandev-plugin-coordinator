@@ -2,9 +2,12 @@ package governor
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"github.com/stretchr/testify/require"
 	"kandev-plugin-coordinator/server/durablestate"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,6 +19,117 @@ func testStore(t *testing.T) Store {
 	require.NoError(t, d.Migrate(context.Background()))
 	t.Cleanup(func() { d.Close() })
 	return Store{Durable: d, Now: func() time.Time { return time.Date(2026, 9, 19, 18, 0, 0, 0, time.UTC) }, Config: Config{Watchdog: 3 * time.Hour}}
+}
+
+func TestConcurrentTransformsPreserveObservationsContractsAndReviewBaseline(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	a, b := observation("a", true), observation("b", true)
+	var wg sync.WaitGroup
+	for _, o := range []Observation{a, b} {
+		wg.Add(1)
+		go func(o Observation) { defer wg.Done(); _, err := s.Observe(ctx, 0, o); require.NoError(t, err) }(o)
+	}
+	wg.Wait()
+	c := Contract{StrategyVersion: 1, PlanVersion: 1, WorkspaceID: "w", TaskID: "other", Goal: "finish", NextAction: "test", ExecutorTier: TierTerra, Head: "h", Generation: "g", ExpiresAt: time.Now().Add(time.Hour), AllowedActions: []string{"test"}, CompletionConditions: []string{"pass"}}
+	wg.Add(2)
+	go func() { defer wg.Done(); _, err := s.PutContract(ctx, 0, 0, c); require.NoError(t, err) }()
+	go func() {
+		defer wg.Done()
+		require.NoError(t, s.AcknowledgeStrategy(ctx, 0, "w", "b", b.ObservedAt.Add(time.Second)))
+	}()
+	wg.Wait()
+	r, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	raw, _ := json.Marshal(r.Body)
+	var st state
+	require.NoError(t, json.Unmarshal(raw, &st))
+	require.Len(t, st.Events, 2)
+	require.Contains(t, st.Contracts, "other")
+	require.Equal(t, "b", st.ReviewBaseline.EventID)
+}
+
+func TestConcurrentSameContractVersionHasOneWinner(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	c := Contract{StrategyVersion: 1, PlanVersion: 1, WorkspaceID: "w", TaskID: "t", Goal: "finish", NextAction: "test", ExecutorTier: TierTerra, Head: "h", Generation: "g", ExpiresAt: time.Now().Add(time.Hour), AllowedActions: []string{"test"}, CompletionConditions: []string{"pass"}}
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, err := s.PutContract(ctx, 0, 0, c); results <- err }()
+	}
+	wg.Wait()
+	close(results)
+	ok, stale := 0, 0
+	for err := range results {
+		if err == nil {
+			ok++
+		} else if errors.Is(err, ErrStaleContract) {
+			stale++
+		}
+	}
+	require.Equal(t, 1, ok)
+	require.Equal(t, 1, stale)
+}
+
+func TestOutcomeAgeRoutesAstraDespiteActivityAndDigestNeverDropsLastAttention(t *testing.T) {
+	s := testStore(t)
+	o := observation("one", true)
+	due := o.ObservedAt.Add(-time.Minute)
+	o.Tasks = []Task{{ID: "a", State: "active", EvidenceDueAt: due, ActivityAt: o.ObservedAt, LastProgress: due.Add(-time.Minute)}, {ID: "b", State: "active", EvidenceDueAt: due, ActivityAt: o.ObservedAt, LastProgress: due.Add(-time.Minute)}}
+	_, err := s.Observe(context.Background(), 0, o)
+	require.NoError(t, err)
+	o.EventID = "two"
+	o.ObservedAt = o.ObservedAt.Add(time.Minute)
+	o.Tasks[0].ActivityAt = o.ObservedAt
+	r, err := s.Observe(context.Background(), 0, o)
+	require.NoError(t, err)
+	require.Equal(t, TierAstra, r.Decision)
+	require.Contains(t, r.Reasons, "overdue_cohort")
+	tiny := observation("tiny", true)
+	tiny.WorkspaceID = "tiny"
+	tiny.Tasks[0].BlockerReason = "x"
+	_, err = Store{Durable: s.Durable, Now: s.Now, Config: Config{MaxDigestBytes: 1}}.Observe(context.Background(), 0, tiny)
+	require.ErrorIs(t, err, ErrDigestTooSmall)
+}
+
+func TestReplayConflictDistinctContractsAndReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "reopen.db")
+	d, err := durablestate.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Migrate(ctx))
+	s := Store{Durable: d, Now: func() time.Time { return time.Date(2026, 9, 19, 18, 0, 0, 0, time.UTC) }}
+	o := observation("replay", true)
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	o.Tasks[0].Owner = "changed"
+	_, err = s.Observe(ctx, 0, o)
+	require.Error(t, err)
+	makeContract := func(id string) Contract {
+		return Contract{StrategyVersion: 1, PlanVersion: 1, WorkspaceID: "w", TaskID: id, Goal: "g", NextAction: "a", ExecutorTier: TierLuna, Head: "h", Generation: "g", ExpiresAt: time.Now().Add(time.Hour), AllowedActions: []string{"a"}, CompletionConditions: []string{"done"}}
+	}
+	_, err = s.PutContract(ctx, 0, 0, makeContract("one"))
+	require.NoError(t, err)
+	_, err = s.PutContract(ctx, 0, 0, makeContract("two"))
+	require.NoError(t, err)
+	require.NoError(t, s.Durable.Close())
+	d, err = durablestate.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Migrate(ctx))
+	defer d.Close()
+	reopened := Store{Durable: d, Now: s.Now}
+	_, err = reopened.ValidateCurrentContract(ctx, "w", "two", "h", "g", 1, 1, time.Now())
+	require.NoError(t, err)
+}
+
+func TestDigestBoundsCountEveryOmission(t *testing.T) {
+	d := Digest{SchemaVersion: SchemaVersion, WorkspaceID: "w", Attention: []Attention{{TaskID: "1", Reason: "a", Tier: TierAstra}, {TaskID: "2", Reason: "b", Tier: TierSol}, {TaskID: "3", Reason: "c", Tier: TierTerra}}}
+	full, _ := json.Marshal(d)
+	require.NoError(t, boundDigest(&d, len(full)-20))
+	require.Equal(t, 1, d.Omitted)
 }
 func observation(id string, complete bool) Observation {
 	return Observation{SchemaVersion: SchemaVersion, WorkspaceID: "w", ObservedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), EventID: id, Provenance: "normalized_snapshot", Complete: complete, Tasks: []Task{{ID: "t", Lane: "work", State: "active"}}}
@@ -50,11 +164,16 @@ func TestWatchdogAndContract(t *testing.T) {
 
 func TestContractCompareAndSwapSurvivesStoreReads(t *testing.T) {
 	s := testStore(t)
-	contract := Contract{WorkspaceID: "w", TaskID: "t", Goal: "finish", NextAction: "test", Head: "abc", Generation: "g", ExpiresAt: time.Now().Add(time.Hour), AllowedActions: []string{"test"}, ProhibitedActions: []string{"dispatch"}}
+	contract := Contract{StrategyVersion: 1, PlanVersion: 1, WorkspaceID: "w", TaskID: "t", Goal: "finish", NextAction: "test", ExecutorTier: TierTerra, Head: "abc", Generation: "g", ExpiresAt: time.Now().Add(time.Hour), AllowedActions: []string{"test"}, ProhibitedActions: []string{"dispatch"}, CompletionConditions: []string{"test passes"}}
 	stored, err := s.PutContract(context.Background(), 0, 0, contract)
 	require.NoError(t, err)
 	require.Equal(t, 1, stored.Version)
 	_, err = s.PutContract(context.Background(), 0, 0, contract)
 	require.ErrorIs(t, err, ErrStaleContract)
 	require.NoError(t, ValidateContract(stored, "w", "t", "abc", "g", time.Now()))
+	_, err = s.ValidateCurrentContract(context.Background(), "w", "t", "abc", "g", 1, 2, time.Now())
+	require.ErrorIs(t, err, ErrStaleContract)
+	current, err := s.ValidateCurrentContract(context.Background(), "w", "t", "abc", "g", 1, 1, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, stored.Version, current.Version)
 }
