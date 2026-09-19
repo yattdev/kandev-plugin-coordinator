@@ -100,10 +100,13 @@ func (c Config) normalized() Config {
 }
 
 type state struct {
-	Last       Observation         `json:"last"`
-	StrategyAt time.Time           `json:"strategy_at"`
-	Events     []string            `json:"events"`
-	Contracts  map[string]Contract `json:"contracts,omitempty"`
+	Last        Observation         `json:"last"`
+	StrategyAt  time.Time           `json:"strategy_at"`
+	Events      []string            `json:"events"`
+	Contracts   map[string]Contract `json:"contracts,omitempty"`
+	BaselineAt  time.Time           `json:"baseline_at,omitempty"`
+	Results     map[string]Result   `json:"results,omitempty"`
+	EventBodies map[string]string   `json:"event_bodies,omitempty"`
 }
 type Store struct {
 	Durable *durablestate.Store
@@ -112,27 +115,52 @@ type Store struct {
 }
 
 func (s Store) Observe(ctx context.Context, fence int64, in Observation) (Result, error) {
-	if err := validate(in, s.Config.normalized()); err != nil {
+	cfg := s.Config.normalized()
+	now := time.Now()
+	if s.Now != nil {
+		now = s.Now()
+	}
+	if err := validate(in, cfg); err != nil {
 		return Result{}, err
 	}
 	st, found, err := s.load(ctx, in.WorkspaceID)
 	if err != nil {
 		return Result{}, err
 	}
+	bodyHash, _ := json.Marshal(in)
 	for _, id := range st.Events {
 		if id == in.EventID {
-			return Result{Duplicate: true, Decision: TierNone, Reasons: []string{"duplicate_event"}, Digest: Digest{SchemaVersion: SchemaVersion, WorkspaceID: in.WorkspaceID, Complete: in.Complete, Provenance: in.Provenance}, LiveBoardCollection: "unavailable: normalized snapshot supplied by caller"}, nil
+			if st.EventBodies[in.EventID] != string(bodyHash) {
+				return Result{}, fmt.Errorf("shadow governor: duplicate event payload conflict")
+			}
+			r := st.Results[in.EventID]
+			r.Duplicate = true
+			return r, nil
 		}
 	}
-	result := evaluate(st, in, s.Config.normalized())
+	if !st.Last.ObservedAt.IsZero() && in.ObservedAt.Before(st.Last.ObservedAt) {
+		return Result{}, fmt.Errorf("shadow governor: stale observation")
+	}
+	if in.ObservedAt.After(now.Add(5 * time.Minute)) {
+		return Result{}, fmt.Errorf("shadow governor: future observation")
+	}
+	result := evaluate(st, in, cfg)
 	st.Last = in
 	st.Events = append(st.Events, in.EventID)
 	if len(st.Events) > 128 {
 		st.Events = st.Events[len(st.Events)-128:]
 	}
-	if result.Decision == TierAstra {
-		st.StrategyAt = in.ObservedAt
+	if st.BaselineAt.IsZero() && in.Complete {
+		st.BaselineAt = in.ObservedAt
 	}
+	if st.Results == nil {
+		st.Results = map[string]Result{}
+	}
+	if st.EventBodies == nil {
+		st.EventBodies = map[string]string{}
+	}
+	st.Results[in.EventID] = result
+	st.EventBodies[in.EventID] = string(bodyHash)
 	body, err := toBody(st)
 	if err != nil {
 		return Result{}, err
@@ -230,7 +258,19 @@ func evaluate(old state, in Observation, c Config) Result {
 		byID[t.ID] = t
 	}
 	for _, t := range in.Tasks {
-		if prev, ok := byID[t.ID]; !ok || prev.State != t.State || prev.Lane != t.Lane || prev.BlockerReason != t.BlockerReason || prev.LatestResult != t.LatestResult {
+		if prev, ok := byID[t.ID]; !ok || prev.State != t.State || prev.Lane != t.Lane || prev.Owner != t.Owner || prev.Head != t.Head || prev.PlanVersion != t.PlanVersion || !prev.LastProgress.Equal(t.LastProgress) || strings.Join(prev.Dependencies, ",") != strings.Join(t.Dependencies, ",") || prev.BlockerReason != t.BlockerReason || prev.LatestResult != t.LatestResult {
+			d.Changed++
+		}
+	}
+	for id := range byID {
+		found := false
+		for _, t := range in.Tasks {
+			if t.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
 			d.Changed++
 		}
 	}
@@ -257,10 +297,47 @@ func evaluate(old state, in Observation, c Config) Result {
 	if !old.StrategyAt.IsZero() && in.ObservedAt.Before(old.StrategyAt) {
 		d.Attention = append(d.Attention, Attention{Reason: "clock_rollback", Tier: TierAstra})
 	}
-	if !old.StrategyAt.IsZero() && in.ObservedAt.Sub(old.StrategyAt) >= c.Watchdog {
-		d.Attention = append(d.Attention, Attention{Reason: "active_watchdog", Tier: TierSol})
+	if !old.BaselineAt.IsZero() && len(in.Tasks) > 0 && in.ObservedAt.Sub(old.StrategyAtOrBaseline()) >= c.Watchdog {
+		d.Attention = append(d.Attention, Attention{Reason: "active_watchdog", Tier: TierAstra})
 	}
-	return result(d, nil)
+	r := result(d, nil)
+	raw, _ := json.Marshal(r.Digest)
+	if len(raw) > c.MaxDigestBytes {
+		r.Decision = TierAstra
+		r.Reasons = append(r.Reasons, "digest_expansion_required")
+		r.Digest.Omitted = len(r.Digest.Attention)
+		r.Digest.Attention = []Attention{{Reason: "digest_expansion_required", Tier: TierAstra}}
+	}
+	return r
+}
+func (s state) StrategyAtOrBaseline() time.Time {
+	if !s.StrategyAt.IsZero() {
+		return s.StrategyAt
+	}
+	return s.BaselineAt
+}
+
+// AcknowledgeStrategy is the only operation allowed to advance the strategic
+// watermark after a successful external review receipt.
+func (s Store) AcknowledgeStrategy(ctx context.Context, fence int64, workspace, eventID string, at time.Time) error {
+	st, found, err := s.load(ctx, workspace)
+	if err != nil || !found {
+		return fmt.Errorf("shadow governor: missing checkpoint: %w", err)
+	}
+	if _, ok := st.Results[eventID]; !ok {
+		return fmt.Errorf("shadow governor: unknown review event")
+	}
+	st.StrategyAt = at
+	b, err := toBody(st)
+	if err != nil {
+		return err
+	}
+	r, ok, err := s.Durable.GetRecord(ctx, workspace, stateRecordID)
+	if err != nil || !ok {
+		return fmt.Errorf("shadow governor: checkpoint vanished")
+	}
+	_, err = s.Durable.CompareAndSwapRecord(ctx, workspace, fence, stateRecordID, r.SHA256, b, durablestate.StorageInline)
+	return err
 }
 func result(d Digest, base []string) Result {
 	sort.Slice(d.Attention, func(i, j int) bool {

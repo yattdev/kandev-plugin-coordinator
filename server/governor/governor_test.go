@@ -15,7 +15,7 @@ func testStore(t *testing.T) Store {
 	require.NoError(t, e)
 	require.NoError(t, d.Migrate(context.Background()))
 	t.Cleanup(func() { d.Close() })
-	return Store{Durable: d, Config: Config{Watchdog: 3 * time.Hour}}
+	return Store{Durable: d, Now: func() time.Time { return time.Date(2026, 9, 19, 18, 0, 0, 0, time.UTC) }, Config: Config{Watchdog: 3 * time.Hour}}
 }
 func observation(id string, complete bool) Observation {
 	return Observation{SchemaVersion: SchemaVersion, WorkspaceID: "w", ObservedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), EventID: id, Provenance: "normalized_snapshot", Complete: complete, Tasks: []Task{{ID: "t", Lane: "work", State: "active"}}}
@@ -44,7 +44,7 @@ func TestWatchdogAndContract(t *testing.T) {
 	o.Tasks[0].BlockerReason = "waiting on test"
 	r, e := s.Observe(ctx, 0, o)
 	require.NoError(t, e)
-	require.Equal(t, TierSol, r.Decision)
+	require.Equal(t, TierAstra, r.Decision)
 	require.ErrorIs(t, ValidateContract(Contract{Version: 1, WorkspaceID: "w", TaskID: "t", Head: "h", Generation: "g", ExpiresAt: time.Now().Add(-time.Minute)}, "w", "t", "h", "g", time.Now()), ErrStaleContract)
 }
 
