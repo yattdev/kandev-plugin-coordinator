@@ -156,3 +156,16 @@ func TestRecoveryRecurrenceReceiptReplaySurvivesReopen(t *testing.T) {
 	require.Equal(t, TierAstra, result.Decision)
 	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
 }
+
+func TestRecoveryTransitionRejectsAffectedTaskMutation(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	o := observation("origin", true)
+	o.Tasks = []Task{{ID: "t", Head: "h", PlanVersion: 1, State: "active"}, {ID: "other", Head: "h2", PlanVersion: 1, State: "active"}}
+	_, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	r := SolRecovery{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "request", ReceiptID: "requested", ActualModel: TierSol, ActualModelReceipt: "actual", Status: "requested", StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, AffectedTaskIDs: []string{"t"}}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	r.Status, r.ReceiptID, r.AffectedTaskIDs = "started", "started", []string{"other"}
+	require.ErrorIs(t, s.RecordSolRecovery(ctx, 0, "w", r), ErrStaleContract)
+}

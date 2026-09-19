@@ -477,7 +477,7 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 			if old.RequestID != r.RequestID || old.ReceiptID == r.ReceiptID || !validRecoveryTransition(old.Status, r.Status) {
 				return ErrStaleContract
 			}
-			if old.EventID != r.EventID || old.EvidenceID != r.EvidenceID || old.ActualModel != r.ActualModel || old.ActualModelReceipt != r.ActualModelReceipt || !old.CompletedAt.Equal(r.CompletedAt) {
+			if old.EventID != r.EventID || old.EvidenceID != r.EvidenceID || old.ActualModel != r.ActualModel || old.ActualModelReceipt != r.ActualModelReceipt || !old.CompletedAt.Equal(r.CompletedAt) || !reflect.DeepEqual(old.AffectedTaskIDs, r.AffectedTaskIDs) {
 				return ErrStaleContract
 			}
 			if r.EffectDueAt.IsZero() {
