@@ -170,6 +170,10 @@ type RecoveryEffectReceipt struct {
 	StrategyVersion, PlanVersion                                       int
 	ObservedAt                                                         time.Time
 }
+type RecoveryRecurrenceReceipt struct {
+	IncidentID, EventID, EvidenceID, RecurrenceID string
+	StrategyVersion, PlanVersion                  int
+}
 type Store struct {
 	Durable *durablestate.Store
 	Now     func() time.Time
@@ -534,6 +538,24 @@ func (s Store) RecordSolRecurrence(ctx context.Context, fence int64, workspace, 
 					return ErrStaleContract
 				}
 				r.RecurrenceID = recurrenceID
+				st.Recoveries[k] = r
+				return nil
+			}
+		}
+		return ErrStaleContract
+	})
+}
+func (s Store) RecordSolRecurrenceReceipt(ctx context.Context, fence int64, workspace string, receipt RecoveryRecurrenceReceipt) error {
+	return s.transform(ctx, fence, workspace, func(st *state) error {
+		if receipt.IncidentID == "" || receipt.RecurrenceID == "" || !st.Last.Complete || receipt.EventID != st.Last.EventID || receipt.EvidenceID != st.Last.EvidenceID {
+			return ErrStaleContract
+		}
+		for k, r := range st.Recoveries {
+			if r.IncidentID == receipt.IncidentID {
+				if r.Status != "effect_verified" || r.RecurrenceID != "" || r.StrategyVersion != receipt.StrategyVersion || r.PlanVersion != receipt.PlanVersion || !st.Last.ObservedAt.After(r.EffectVerifiedAt) {
+					return ErrStaleContract
+				}
+				r.RecurrenceID = receipt.RecurrenceID
 				st.Recoveries[k] = r
 				return nil
 			}

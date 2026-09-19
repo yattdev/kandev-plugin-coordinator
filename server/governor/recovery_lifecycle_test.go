@@ -52,3 +52,38 @@ func TestRecoveryLifecycleSurvivesReopenAndVerifiesLaterEffect(t *testing.T) {
 	err = s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", RecoveryEffectReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "test", Milestone: "pass", ObservedAt: o.ObservedAt})
 	require.NoError(t, err)
 }
+
+func TestRecoveryRecurrenceRequiresLatestMatchingCompleteEvidence(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	o := observation("origin", true)
+	o.Tasks = []Task{{ID: "t", Head: "h", PlanVersion: 1, State: "active"}}
+	_, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	r := SolRecovery{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "request", ReceiptID: "accepted", ProposedAction: "run", ExpectedEffect: "pass", ActualModel: TierSol, ActualModelReceipt: "actual", Status: "decision_accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{"t"}}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	o.EventID = "effect"
+	o.EvidenceID = "effect-e"
+	o.ObservedAt = o.ObservedAt.Add(time.Minute)
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", RecoveryEffectReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "v", Milestone: "m"}))
+	err = s.RecordSolRecurrenceReceipt(ctx, 0, "w", RecoveryRecurrenceReceipt{IncidentID: "incident", EventID: "wrong", EvidenceID: o.EvidenceID, StrategyVersion: 1, PlanVersion: 1, RecurrenceID: "r"})
+	require.ErrorIs(t, err, ErrStaleContract)
+	err = s.RecordSolRecurrenceReceipt(ctx, 0, "w", RecoveryRecurrenceReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, StrategyVersion: 1, PlanVersion: 1, RecurrenceID: "r"})
+	require.ErrorIs(t, err, ErrStaleContract)
+	o.EventID = "recurrence"
+	o.EvidenceID = "recurrence-e"
+	o.ObservedAt = o.ObservedAt.Add(time.Minute)
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	err = s.RecordSolRecurrenceReceipt(ctx, 0, "w", RecoveryRecurrenceReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, StrategyVersion: 1, PlanVersion: 1, RecurrenceID: "r"})
+	require.NoError(t, err)
+	o.EventID = "after"
+	o.EvidenceID = "after-e"
+	o.ObservedAt = o.ObservedAt.Add(time.Minute)
+	result, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	require.Equal(t, TierAstra, result.Decision)
+	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
+}
