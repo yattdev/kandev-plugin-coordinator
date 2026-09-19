@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -216,6 +217,8 @@ func TestRejectedRecoveryTransitionsLeaveDurableStateUntouched(t *testing.T) {
 			require.True(t, ok)
 			beforeBody, err := json.Marshal(before.Body)
 			require.NoError(t, err)
+			beforeLog, err := s.Durable.ListMutations(ctx, "w")
+			require.NoError(t, err)
 			require.Error(t, s.RecordSolRecovery(ctx, 0, "w", r))
 			after, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
 			require.NoError(t, err)
@@ -223,7 +226,28 @@ func TestRejectedRecoveryTransitionsLeaveDurableStateUntouched(t *testing.T) {
 			afterBody, err := json.Marshal(after.Body)
 			require.NoError(t, err)
 			require.Equal(t, before.SHA256, after.SHA256)
+			require.Equal(t, before.UpdatedAt, after.UpdatedAt)
 			require.JSONEq(t, string(beforeBody), string(afterBody))
+			afterLog, err := s.Durable.ListMutations(ctx, "w")
+			require.NoError(t, err)
+			require.Equal(t, len(beforeLog), len(afterLog))
+			require.True(t, reflect.DeepEqual(beforeLog, afterLog))
 		})
 	}
+
+	t.Run("valid requested to started preserves identity", func(t *testing.T) {
+		s := testStore(t)
+		o := observation("origin", true)
+		o.Tasks = []Task{{ID: "t", Head: "h", PlanVersion: 1, State: "active"}}
+		_, err := s.Observe(ctx, 0, o)
+		require.NoError(t, err)
+		r := SolRecovery{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "request", ReceiptID: "requested", ActualModel: TierSol, ActualModelReceipt: "actual", Status: "requested", StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, AffectedTaskIDs: []string{"t"}}
+		require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+		r.Status, r.ReceiptID = "started", "started"
+		require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+		st, _, err := s.load(ctx, "w")
+		require.NoError(t, err)
+		stored := st.Recoveries["incident/1/1"]
+		require.Equal(t, []string{"t"}, stored.AffectedTaskIDs)
+	})
 }
