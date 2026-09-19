@@ -162,6 +162,8 @@ type SolRecovery struct {
 	AffectedTaskIDs                                                                                                       []string
 	ActualModelReceipt                                                                                                    string
 	EffectVerifiedAt                                                                                                      time.Time
+	RecurrenceEventID, RecurrenceEvidenceID, RecurrenceReceiptID                                                          string
+	RecurrenceObservedAt                                                                                                  time.Time
 }
 
 // RecoveryEffectReceipt binds effect evidence to the current normalized
@@ -570,6 +572,7 @@ func (s Store) RecordSolRecurrenceReceipt(ctx context.Context, fence int64, work
 			return ErrStaleContract
 		}
 		r.RecurrenceID = receipt.RecurrenceID
+		r.RecurrenceEventID, r.RecurrenceEvidenceID, r.RecurrenceReceiptID, r.RecurrenceObservedAt = receipt.EventID, receipt.EvidenceID, receipt.ReceiptID, receipt.ObservedAt
 		st.Recoveries[key] = r
 		st.RecurrenceReceipts[receipt.ReceiptID] = receipt
 		return nil
