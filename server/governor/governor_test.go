@@ -182,7 +182,7 @@ func TestMissingOrRecurringSolEffectEscalatesAstraAndReplayIsIdempotent(t *testi
 	o.ObservedAt = time.Date(2026, 9, 19, 16, 0, 0, 0, time.UTC)
 	_, err := s.Observe(ctx, 0, o)
 	require.NoError(t, err)
-	r := SolRecovery{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "r", ProposedAction: "reproduce", ExpectedEffect: "test passes", ActualModel: TierSol, Status: "accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Minute)}
+	r := SolRecovery{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "r", ProposedAction: "reproduce", ExpectedEffect: "test passes", ActualModel: TierSol, ActualModelReceipt: "trusted", Status: "decision_accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Minute)}
 	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
 	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
 	o.EventID = "sol-next"

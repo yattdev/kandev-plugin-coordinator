@@ -158,6 +158,8 @@ type SolRecovery struct {
 	Accepted                                                                                                   bool
 	CompletedAt, EffectDueAt                                                                                   time.Time
 	AffectedTaskIDs                                                                                            []string
+	ActualModelReceipt                                                                                         string
+	EffectVerifiedAt                                                                                           time.Time
 }
 type Store struct {
 	Durable *durablestate.Store
@@ -401,7 +403,7 @@ func evaluate(old state, in Observation, c Config) (Result, error) {
 		d.Attention = append(d.Attention, Attention{Reason: "multiple_blocked", Tier: TierAstra})
 	}
 	for _, r := range old.Recoveries {
-		if r.StrategyVersion == in.StrategyVersion && r.PlanVersion == in.PlanVersion && r.Status == "accepted" && r.EffectEvidenceID == "" && (!r.EffectDueAt.After(in.ObservedAt) || r.RecurrenceID != "") {
+		if r.StrategyVersion == in.StrategyVersion && r.PlanVersion == in.PlanVersion && ((r.Status == "decision_accepted" && r.EffectEvidenceID == "" && !r.EffectDueAt.After(in.ObservedAt)) || r.RecurrenceID != "") {
 			d.Attention = append(d.Attention, Attention{Reason: "ineffective_sol_recovery", Tier: TierAstra})
 		}
 	}
@@ -424,8 +426,15 @@ func evaluate(old state, in Observation, c Config) (Result, error) {
 }
 
 func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace string, r SolRecovery) error {
-	if r.IncidentID == "" || r.EventID == "" || r.EvidenceID == "" || r.RequestID == "" || r.ProposedAction == "" || r.ExpectedEffect == "" || r.ActualModel != TierSol || r.Status != "accepted" || !r.Accepted || r.CompletedAt.IsZero() || r.EffectDueAt.Before(r.CompletedAt) {
+	now := time.Now()
+	if s.Now != nil {
+		now = s.Now()
+	}
+	if r.IncidentID == "" || r.EventID == "" || r.EvidenceID == "" || r.RequestID == "" || r.ActualModelReceipt == "" || r.ActualModel != TierSol || r.CompletedAt.After(now) || !validRecoveryStatus(r.Status) {
 		return fmt.Errorf("shadow governor: invalid Sol recovery")
+	}
+	if r.Status == "decision_accepted" && (r.ProposedAction == "" || r.ExpectedEffect == "" || !r.Accepted || r.EffectDueAt.Before(r.CompletedAt)) {
+		return fmt.Errorf("shadow governor: invalid accepted Sol recovery")
 	}
 	return s.transform(ctx, fence, workspace, func(st *state) error {
 		if st.Last.EventID != r.EventID || st.Last.EvidenceID != r.EvidenceID || st.Last.StrategyVersion != r.StrategyVersion || st.Last.PlanVersion != r.PlanVersion {
@@ -439,11 +448,26 @@ func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace str
 			if old.RequestID == r.RequestID && reflect.DeepEqual(old, r) {
 				return errNoMutation
 			}
-			return ErrStaleContract
+			if old.RequestID != r.RequestID || !validRecoveryTransition(old.Status, r.Status) {
+				return ErrStaleContract
+			}
+			if r.EffectDueAt.IsZero() {
+				r.EffectDueAt = old.EffectDueAt
+			}
 		}
 		st.Recoveries[key] = r
 		return nil
 	})
+}
+func validRecoveryStatus(v string) bool {
+	switch v {
+	case "requested", "started", "completed", "decision_accepted", "effect_verified", "failed", "outcome_unknown":
+		return true
+	}
+	return false
+}
+func validRecoveryTransition(old, next string) bool {
+	return (old == "requested" && (next == "started" || next == "failed" || next == "outcome_unknown")) || (old == "started" && (next == "completed" || next == "failed" || next == "outcome_unknown")) || (old == "completed" && next == "decision_accepted")
 }
 func (s Store) VerifySolRecoveryEffect(ctx context.Context, fence int64, workspace, incident, evidence string) error {
 	return s.transform(ctx, fence, workspace, func(st *state) error {
@@ -453,6 +477,26 @@ func (s Store) VerifySolRecoveryEffect(ctx context.Context, fence int64, workspa
 					return ErrStaleContract
 				}
 				r.EffectEvidenceID = evidence
+				r.EffectVerifiedAt = st.Last.ObservedAt
+				r.Status = "effect_verified"
+				st.Recoveries[k] = r
+				return nil
+			}
+		}
+		return ErrStaleContract
+	})
+}
+func (s Store) RecordSolRecurrence(ctx context.Context, fence int64, workspace, incident, recurrenceID string) error {
+	return s.transform(ctx, fence, workspace, func(st *state) error {
+		if recurrenceID == "" {
+			return ErrStaleContract
+		}
+		for k, r := range st.Recoveries {
+			if r.IncidentID == incident {
+				if r.EffectEvidenceID == "" || r.RecurrenceID != "" {
+					return ErrStaleContract
+				}
+				r.RecurrenceID = recurrenceID
 				st.Recoveries[k] = r
 				return nil
 			}
