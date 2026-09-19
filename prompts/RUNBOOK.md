@@ -6,11 +6,14 @@ uses each workspace's effective default profile. A missing, disabled, or
 incompatible effective profile produces `configuration_required` without a
 partial conversation.
 
-Configure monitoring in each workspace's workflow settings. Select only the
-steps the Coordinator may inspect and optionally add a multiline prompt. The
-plugin reads `coordinator_monitored` and `coordinator_prompt` directly from the
-host; it stores no shadow policy. No selected steps means no scheduled or
-manual dispatch for that workspace.
+Configure monitoring in each workspace's **Settings > Integrations >
+Coordinator** page. Select only the workflow steps the Coordinator may inspect
+and optionally add a multiline prompt. These selections are stored in the
+plugin's workspace-scoped durable policy and resolved against the Host's
+generic workflow readers at dispatch time. Deleted or unavailable selections
+remain saved but do not dispatch. No available selected steps means the
+workspace is `configuration_required` and neither scheduled nor manual runs
+dispatch.
 
 The daily wake defaults to 07:55 America/Montreal on weekdays. A successful
 daily dispatch arms 45-minute monitoring cycles inside the 08:00-18:00 window.
@@ -31,6 +34,7 @@ and state. Uninstall cleanup is host-owned and provenance-scoped to this
 plugin.
 
 This release requires a Kandev build containing the `agent_conversation`
-capability, `Host.AgentConversations`, host-owned workflow-step coordinator
-settings, and `host.ui.WorkspaceAgentChat`. Older hosts show an explicit
+capability, `Host.AgentConversations`, generic workflow/workflow-step readers,
+the workspace Integration Settings contribution, and
+`host.ui.WorkspaceAgentChat`. Older hosts show an explicit
 compatibility state rather than creating a visible task fallback.

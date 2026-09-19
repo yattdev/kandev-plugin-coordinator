@@ -53,6 +53,47 @@ func TestEnsureActionReturnsTypedConfigurationState(t *testing.T) {
 
 func TestActionsRejectMissingVerifiedWorkspace(t *testing.T) {
 	plugin := New()
+	installTestPolicyStore(t, plugin)
 	_, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{ActionKey: ActionStatus})
 	require.ErrorContains(t, err, "verified workspace context")
+}
+
+func TestPolicyActionUsesVerifiedWorkspaceAndPersistsSelections(t *testing.T) {
+	host := newFakeHost()
+	host.workflows = []pluginsdk.Workflow{{ID: "workflow-1", WorkspaceID: "workspace-verified", Name: "Build"}}
+	host.steps["workflow-1"] = []pluginsdk.WorkflowStep{{ID: "step-1", WorkflowID: "workflow-1", Name: "Work"}}
+	plugin := New()
+	plugin.UnimplementedPlugin.SetHost(host)
+	response, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{
+		ActionKey: ActionPolicy, Context: pluginsdk.VerifiedActionContext{WorkspaceID: "workspace-verified"},
+		Body: []byte(`{"selections":[{"workflow_id":"workflow-1","workstep_id":"step-1","prompt":"inspect blockers"}]}`),
+	})
+	require.NoError(t, err)
+	var body struct {
+		Selections []WorkflowPolicy `json:"selections"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body, &body))
+	require.Equal(t, []WorkflowPolicy{{WorkflowID: "workflow-1", WorkstepID: "step-1", Prompt: "inspect blockers"}}, body.Selections)
+	checks, err := plugin.selectedChecks(context.Background(), "workspace-verified")
+	require.NoError(t, err)
+	require.Len(t, checks, 1)
+	require.Equal(t, "inspect blockers", checks[0].Prompt)
+}
+
+func TestStatusAndManualActionsReportUnavailablePolicyAsConfigurationRequired(t *testing.T) {
+	host := newFakeHost()
+	host.config = map[string]any{"monitoring_enabled": true}
+	plugin := NewWithConversationManager(unavailableConversationManager{})
+	installTestPolicyStore(t, plugin)
+	plugin.UnimplementedPlugin.SetHost(host)
+	status, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{ActionKey: ActionStatus, Context: pluginsdk.VerifiedActionContext{WorkspaceID: "workspace-1"}})
+	require.NoError(t, err)
+	var statusBody map[string]any
+	require.NoError(t, json.Unmarshal(status.Body, &statusBody))
+	require.Equal(t, "configuration_required", statusBody["status"])
+	manual, err := plugin.HandleAction(context.Background(), &pluginsdk.PluginActionRequest{ActionKey: ActionRunCycle, Context: pluginsdk.VerifiedActionContext{WorkspaceID: "workspace-1"}, Body: []byte(`{"idempotency_key":"manual-1"}`)})
+	require.NoError(t, err)
+	var manualBody map[string]any
+	require.NoError(t, json.Unmarshal(manual.Body, &manualBody))
+	require.Equal(t, "configuration_required", manualBody["status"])
 }

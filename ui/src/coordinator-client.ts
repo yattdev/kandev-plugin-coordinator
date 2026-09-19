@@ -1,4 +1,4 @@
-import type { CoordinatorHost, EnsureResponse, ReportPage, RunResponse } from "./contracts";
+import type { CoordinatorHost, EnsureResponse, PolicyResponse, ReportPage, RunResponse, WorkflowPolicy } from "./contracts";
 
 export class CoordinatorClient {
   constructor(private readonly host: CoordinatorHost, private readonly workspaceId: string) {}
@@ -20,6 +20,14 @@ export class CoordinatorClient {
       workspaceId: this.workspaceId,
       body: { idempotency_key: idempotencyKey },
     }, { signal });
+  }
+
+  policy(signal?: AbortSignal): Promise<PolicyResponse> {
+    return this.host.api.invokeAction<PolicyResponse>("coordinator.policy", { workspaceId: this.workspaceId }, { signal });
+  }
+
+  savePolicy(selections: WorkflowPolicy[], signal?: AbortSignal): Promise<PolicyResponse> {
+    return this.host.api.invokeAction<PolicyResponse>("coordinator.policy", { workspaceId: this.workspaceId, body: { selections } }, { signal });
   }
 }
 

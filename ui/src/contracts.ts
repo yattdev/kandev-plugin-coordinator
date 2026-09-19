@@ -29,12 +29,16 @@ export type RunResponse = {
   dispatch: { status: string; occurrence_key?: string };
 };
 
+export type WorkflowPolicy = { workflow_id: string; workstep_id: string; prompt?: string };
+export type PolicyResponse = { selections: WorkflowPolicy[] };
+
 export type CoordinatorHost = {
   React: {
     createElement(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): ElementNode;
     useEffect(effect: () => void | (() => void), dependencies: unknown[]): void;
     useMemo<T>(factory: () => T, dependencies: unknown[]): T;
     useState<T>(initial: T): [T, (value: T | ((current: T) => T)) => void];
+    useRef<T>(initial: T): { current: T };
   };
   jsx(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): ElementNode;
   ui: {
@@ -69,6 +73,13 @@ export type CoordinatorRegistry = {
     component: Component,
     options?: { topbar?: boolean | { title?: string; subtitle?: string; icon?: string } },
   ): void;
+  registerIntegrationSettings?(settings: {
+    id: string;
+    label: string;
+    description: string;
+    icon?: string;
+    Component: Component;
+  }): void;
 };
 
 declare global {

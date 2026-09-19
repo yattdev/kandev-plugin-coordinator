@@ -9,6 +9,7 @@ describe("registerCoordinator", () => {
       registerTranslations: vi.fn(),
       registerNavItem: vi.fn(),
       registerRoute: vi.fn(),
+      registerIntegrationSettings: vi.fn(),
     } satisfies CoordinatorRegistry;
     const host = {
       React: {},
@@ -32,6 +33,9 @@ describe("registerCoordinator", () => {
 		expect(registry.registerRoute).toHaveBeenCalledWith("/coordinator", expect.any(Function), {
 			topbar: { title: "Coordinator", subtitle: "coordinator_subtitle", icon: "bot" },
 		});
+    expect(registry.registerIntegrationSettings).toHaveBeenCalledWith(expect.objectContaining({
+      id: "coordinator", Component: expect.any(Function),
+    }));
   });
 
 	it("registers only the host-supported English catalog", () => {

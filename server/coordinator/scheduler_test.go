@@ -27,10 +27,11 @@ func configuredScheduler(t *testing.T, dispatchStatus string) (*Plugin, *fakeHos
 	host.workflows = []pluginsdk.Workflow{{ID: "workflow-1", WorkspaceID: "workspace-1", Name: "Build"}}
 	host.steps["workflow-1"] = []pluginsdk.WorkflowStep{{
 		ID: "step-1", WorkflowID: "workflow-1", Name: "Work",
-		CoordinatorMonitored: true, CoordinatorPrompt: "check progress",
 	}}
 	plugin := NewWithConversationManager(hostConversationManager{manager: manager})
+	installTestPolicyStore(t, plugin)
 	plugin.UnimplementedPlugin.SetHost(host)
+	require.NoError(t, plugin.savePolicy(context.Background(), "workspace-1", []WorkflowPolicy{{WorkflowID: "workflow-1", WorkstepID: "step-1", Prompt: "check progress"}}))
 	return plugin, host, manager
 }
 
@@ -106,6 +107,44 @@ func TestManualRunsHaveSeparateCallerIdempotency(t *testing.T) {
 		_, err := plugin.RunManual(context.Background(), "workspace-1", TriggerCycle, string(make([]byte, 257)))
 		return err
 	}(), "must not exceed")
+}
+
+func TestUnavailablePolicyDisablesScheduledRunsWithoutRecordingFailure(t *testing.T) {
+	plugin, host, manager := configuredScheduler(t, "started")
+	host.steps["workflow-1"] = nil
+	config, err := plugin.config(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, plugin.runWorkspaceDue(context.Background(), "workspace-1", config, time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC)))
+	require.Empty(t, manager.dispatches)
+	state, err := plugin.readState(context.Background(), "workspace-1")
+	require.NoError(t, err)
+	require.Empty(t, state.Schedule.LastDispatch.Status)
+	_, err = plugin.RunManual(context.Background(), "workspace-1", TriggerCycle, "manual-disabled")
+	require.ErrorIs(t, err, ErrMonitoringConfigurationRequired)
+	state, err = plugin.readState(context.Background(), "workspace-1")
+	require.NoError(t, err)
+	require.Empty(t, state.Schedule.LastDispatch.Status, "manual configuration errors must not be recorded as failed dispatches")
+	page, err := plugin.listReports(context.Background(), "workspace-1", "", 20)
+	require.NoError(t, err)
+	require.Empty(t, page.Reports, "manual configuration errors must not emit status reports")
+}
+
+func TestLateUnavailablePolicyDoesNotRecordDispatchFailure(t *testing.T) {
+	plugin, host, _ := configuredScheduler(t, "started")
+	config, err := plugin.config(context.Background())
+	require.NoError(t, err)
+	checks, err := plugin.selectedChecks(context.Background(), "workspace-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, checks, "the caller's initial availability check succeeds")
+	host.steps["workflow-1"] = nil
+	_, err = plugin.dispatchAndRecord(context.Background(), "workspace-1", config, TriggerCycle, "manual/workspace-1/cycle/late-unavailable", time.Now(), false)
+	require.ErrorIs(t, err, ErrMonitoringConfigurationRequired)
+	state, err := plugin.readState(context.Background(), "workspace-1")
+	require.NoError(t, err)
+	require.Empty(t, state.Schedule.LastDispatch.Status)
+	page, err := plugin.listReports(context.Background(), "workspace-1", "", 20)
+	require.NoError(t, err)
+	require.Empty(t, page.Reports)
 }
 
 func TestManualBusyDispatchCreatesStatusWithoutArmingSchedule(t *testing.T) {

@@ -21,6 +21,12 @@
         body: { idempotency_key: idempotencyKey }
       }, { signal });
     }
+    policy(signal) {
+      return this.host.api.invokeAction("coordinator.policy", { workspaceId: this.workspaceId }, { signal });
+    }
+    savePolicy(selections, signal) {
+      return this.host.api.invokeAction("coordinator.policy", { workspaceId: this.workspaceId, body: { selections } }, { signal });
+    }
   };
   function manualRunKey(trigger) {
     const cryptoApi = globalThis.crypto;
@@ -191,6 +197,84 @@
     );
   }
 
+  // ui/src/coordinator-settings.ts
+  function createCoordinatorSettings(host) {
+    const React = host.React;
+    const h = React.createElement;
+    return function CoordinatorSettings({ workspaceId } = {}) {
+      const [value, setValue] = React.useState("[]");
+      const [message, setMessage] = React.useState("");
+      const [loadedWorkspace, setLoadedWorkspace] = React.useState(void 0);
+      const [saving, setSaving] = React.useState(false);
+      const currentWorkspace = React.useRef(workspaceId);
+      currentWorkspace.current = workspaceId;
+      React.useEffect(() => {
+        const controller = new AbortController();
+        setLoadedWorkspace(void 0);
+        setSaving(false);
+        setValue("[]");
+        if (!workspaceId) {
+          setMessage("Choose a workspace to configure monitoring.");
+          return () => controller.abort();
+        }
+        setMessage("");
+        const responseWorkspace = workspaceId;
+        void new CoordinatorClient(host, responseWorkspace).policy(controller.signal).then(
+          ({ selections }) => {
+            if (!acceptPolicyResponse(currentWorkspace.current, responseWorkspace)) return;
+            setValue(JSON.stringify(selections, null, 2));
+            setLoadedWorkspace(responseWorkspace);
+          },
+          (error) => {
+            if (controller.signal.aborted || !acceptPolicyResponse(currentWorkspace.current, responseWorkspace)) return;
+            setMessage(error instanceof Error ? error.message : String(error));
+          }
+        );
+        return () => controller.abort();
+      }, [workspaceId]);
+      const save = () => {
+        if (!workspaceId || loadedWorkspace !== workspaceId || saving) return;
+        let selections;
+        try {
+          selections = JSON.parse(value);
+        } catch {
+          setMessage("Selections must be valid JSON.");
+          return;
+        }
+        if (!Array.isArray(selections)) {
+          setMessage("Selections must be a JSON array.");
+          return;
+        }
+        const responseWorkspace = workspaceId;
+        setSaving(true);
+        void new CoordinatorClient(host, responseWorkspace).savePolicy(selections).then(
+          () => {
+            if (!acceptPolicyResponse(currentWorkspace.current, responseWorkspace)) return;
+            setMessage("Monitoring selections saved.");
+            setSaving(false);
+          },
+          (error) => {
+            if (!acceptPolicyResponse(currentWorkspace.current, responseWorkspace)) return;
+            setMessage(error instanceof Error ? error.message : String(error));
+            setSaving(false);
+          }
+        );
+      };
+      const Button = host.ui.Button ?? "button";
+      return h(
+        "div",
+        { className: "space-y-3" },
+        h("p", { className: "text-sm text-muted-foreground" }, "Use rows with workflow_id, workstep_id, and an optional prompt. Deleted steps remain saved but do not dispatch."),
+        h("textarea", { className: "min-h-48 w-full rounded-md border p-3 font-mono text-sm", value, disabled: loadedWorkspace !== workspaceId, onChange: (event) => setValue(event.target.value), "aria-label": "Coordinator monitoring selections" }),
+        h(Button, { type: "button", className: "min-h-11 px-4", disabled: loadedWorkspace !== workspaceId || saving, onClick: save }, "Save monitoring selections"),
+        message ? h("p", { role: "status" }, message) : null
+      );
+    };
+  }
+  function acceptPolicyResponse(currentWorkspace, responseWorkspace) {
+    return currentWorkspace === responseWorkspace;
+  }
+
   // ui/locales/en.json
   var en_default = {
     coordinator_label: "Coordinator",
@@ -235,6 +319,13 @@
     });
     registry.registerRoute("/coordinator", createCoordinatorPage(host), {
       topbar: { title: label, subtitle: host.i18n.t("coordinator_subtitle"), icon: "bot" }
+    });
+    registry.registerIntegrationSettings?.({
+      id: "coordinator",
+      label,
+      description: "Choose the workflow steps monitored in this workspace.",
+      icon: "bot",
+      Component: createCoordinatorSettings(host)
     });
   }
   if (typeof window !== "undefined" && window.registerKandevPlugin) {
