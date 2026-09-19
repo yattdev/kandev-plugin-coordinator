@@ -174,6 +174,25 @@ func TestRoutingHonorsAllTierPrecedence(t *testing.T) {
 		require.Equal(t, tc.want, r.Decision)
 	}
 }
+
+func TestMissingOrRecurringSolEffectEscalatesAstraAndReplayIsIdempotent(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	o := observation("sol", true)
+	o.ObservedAt = time.Date(2026, 9, 19, 16, 0, 0, 0, time.UTC)
+	_, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	r := SolRecovery{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "r", ProposedAction: "reproduce", ExpectedEffect: "test passes", ActualModel: TierSol, Status: "accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Minute)}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	o.EventID = "sol-next"
+	o.EvidenceID = "e-next"
+	o.ObservedAt = o.ObservedAt.Add(2 * time.Minute)
+	result, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	require.Equal(t, TierAstra, result.Decision)
+	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
+}
 func observation(id string, complete bool) Observation {
 	return Observation{SchemaVersion: SchemaVersion, WorkspaceID: "w", ObservedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), EventID: id, Provenance: "normalized_snapshot", Complete: complete, StrategyVersion: 1, PlanVersion: 1, EvidenceID: "evidence-" + id, Tasks: []Task{{ID: "t", Lane: "work", State: "active"}}}
 }

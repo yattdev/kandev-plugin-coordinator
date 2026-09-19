@@ -146,6 +146,15 @@ type state struct {
 	Observations   map[string]Observation `json:"observations,omitempty"`
 	ReviewBaseline Observation            `json:"review_baseline,omitempty"`
 	OverdueTasks   map[string]bool        `json:"overdue_tasks,omitempty"`
+	Recoveries     map[string]SolRecovery `json:"recoveries,omitempty"`
+}
+type SolRecovery struct {
+	IncidentID, EventID, EvidenceID, RequestID, ProposedAction, ExpectedEffect, EffectEvidenceID, RecurrenceID string
+	StrategyVersion, PlanVersion                                                                               int
+	ActualModel                                                                                                Tier
+	Status                                                                                                     string
+	Accepted                                                                                                   bool
+	CompletedAt, EffectDueAt                                                                                   time.Time
 }
 type Store struct {
 	Durable *durablestate.Store
@@ -388,6 +397,11 @@ func evaluate(old state, in Observation, c Config) (Result, error) {
 	if blocked > 1 {
 		d.Attention = append(d.Attention, Attention{Reason: "multiple_blocked", Tier: TierAstra})
 	}
+	for _, r := range old.Recoveries {
+		if r.StrategyVersion == in.StrategyVersion && r.PlanVersion == in.PlanVersion && r.Status == "accepted" && r.EffectEvidenceID == "" && (!r.EffectDueAt.After(in.ObservedAt) || r.RecurrenceID != "") {
+			d.Attention = append(d.Attention, Attention{Reason: "ineffective_sol_recovery", Tier: TierAstra})
+		}
+	}
 	sharedOverdue := 0
 	for id := range actionableOverdue(in) {
 		if old.OverdueTasks[id] {
@@ -404,6 +418,44 @@ func evaluate(old state, in Observation, c Config) (Result, error) {
 		d.Attention = append(d.Attention, Attention{Reason: "active_watchdog", Tier: TierAstra})
 	}
 	return finalizedResult(d, nil, c)
+}
+
+func (s Store) RecordSolRecovery(ctx context.Context, fence int64, workspace string, r SolRecovery) error {
+	if r.IncidentID == "" || r.EventID == "" || r.EvidenceID == "" || r.RequestID == "" || r.ProposedAction == "" || r.ExpectedEffect == "" || r.ActualModel != TierSol || r.Status != "accepted" || !r.Accepted || r.CompletedAt.IsZero() || r.EffectDueAt.Before(r.CompletedAt) {
+		return fmt.Errorf("shadow governor: invalid Sol recovery")
+	}
+	return s.transform(ctx, fence, workspace, func(st *state) error {
+		if st.Last.EventID != r.EventID || st.Last.EvidenceID != r.EvidenceID || st.Last.StrategyVersion != r.StrategyVersion || st.Last.PlanVersion != r.PlanVersion {
+			return ErrStaleContract
+		}
+		if st.Recoveries == nil {
+			st.Recoveries = map[string]SolRecovery{}
+		}
+		key := r.IncidentID + "/" + fmt.Sprint(r.StrategyVersion)
+		if old, ok := st.Recoveries[key]; ok {
+			if old.RequestID == r.RequestID && old == r {
+				return errNoMutation
+			}
+			return ErrStaleContract
+		}
+		st.Recoveries[key] = r
+		return nil
+	})
+}
+func (s Store) VerifySolRecoveryEffect(ctx context.Context, fence int64, workspace, incident, evidence string) error {
+	return s.transform(ctx, fence, workspace, func(st *state) error {
+		for k, r := range st.Recoveries {
+			if r.IncidentID == incident {
+				if evidence == "" || r.EffectEvidenceID != "" || st.Last.EvidenceID != evidence {
+					return ErrStaleContract
+				}
+				r.EffectEvidenceID = evidence
+				st.Recoveries[k] = r
+				return nil
+			}
+		}
+		return ErrStaleContract
+	})
 }
 
 func finalizedResult(d Digest, base []string, c Config) (Result, error) {
