@@ -69,7 +69,7 @@ func TestRecoveryRecurrenceRequiresLatestMatchingCompleteEvidence(t *testing.T) 
 	o.ObservedAt = o.ObservedAt.Add(time.Minute)
 	_, err = s.Observe(ctx, 0, o)
 	require.NoError(t, err)
-	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", RecoveryEffectReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "v", Milestone: "m"}))
+	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", RecoveryEffectReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "v", Milestone: "m", ObservedAt: o.ObservedAt}))
 	err = s.RecordSolRecurrenceReceipt(ctx, 0, "w", RecoveryRecurrenceReceipt{IncidentID: "incident", EventID: "wrong", EvidenceID: o.EvidenceID, StrategyVersion: 1, PlanVersion: 1, RecurrenceID: "r", ReceiptID: "wrong", ObservedAt: o.ObservedAt})
 	require.ErrorIs(t, err, ErrStaleContract)
 	err = s.RecordSolRecurrenceReceipt(ctx, 0, "w", RecoveryRecurrenceReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, StrategyVersion: 2, PlanVersion: 1, RecurrenceID: "r", ReceiptID: "wrong-generation", ObservedAt: o.ObservedAt})
@@ -112,7 +112,7 @@ func TestRecoveryRecurrenceReceiptReplaySurvivesReopen(t *testing.T) {
 	o.ObservedAt = now.Add(-time.Hour)
 	_, err = s.Observe(ctx, 0, o)
 	require.NoError(t, err)
-	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", RecoveryEffectReceipt{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "v", Milestone: "m"}))
+	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", RecoveryEffectReceipt{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "v", Milestone: "m", ObservedAt: o.ObservedAt}))
 	o.EventID = "recurrence"
 	o.EvidenceID = "rec-e"
 	o.ObservedAt = now.Add(-30 * time.Minute)
@@ -355,4 +355,84 @@ func TestRecoveryTransitionReceiptReplayAfterNewerObservationIsImmutable(t *test
 	require.Equal(t, beforeLog, afterConflictLog)
 	require.Equal(t, beforeRecovery, afterConflictState.Recoveries["incident/1/1"])
 	require.Equal(t, beforeLedger, afterConflictState.RecoveryReceipts)
+}
+
+func TestRecoveryEffectReceiptRequiresExactCurrentEvidence(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		prepare func(*Store, *Observation, *RecoveryEffectReceipt) error
+	}{
+		{name: "original trigger", prepare: func(_ *Store, o *Observation, r *RecoveryEffectReceipt) error {
+			r.EventID, r.EvidenceID = "origin", "origin-evidence"
+			return nil
+		}},
+		{name: "incomplete last", prepare: func(s *Store, o *Observation, r *RecoveryEffectReceipt) error {
+			next := *o
+			next.EventID, next.EvidenceID, next.Complete, next.ObservedAt = "incomplete", "incomplete-evidence", false, o.ObservedAt.Add(time.Minute)
+			_, err := s.Observe(ctx, 0, next)
+			r.EventID, r.EvidenceID, r.ObservedAt = next.EventID, next.EvidenceID, next.ObservedAt
+			return err
+		}},
+		{name: "stale receipt time", prepare: func(_ *Store, o *Observation, r *RecoveryEffectReceipt) error {
+			r.ObservedAt = o.ObservedAt.Add(-time.Second)
+			return nil
+		}},
+		{name: "wrong task", prepare: func(_ *Store, _ *Observation, r *RecoveryEffectReceipt) error { r.TaskID = "other"; return nil }},
+		{name: "wrong head", prepare: func(_ *Store, _ *Observation, r *RecoveryEffectReceipt) error { r.Head = "other"; return nil }},
+		{name: "wrong plan", prepare: func(_ *Store, _ *Observation, r *RecoveryEffectReceipt) error { r.PlanVersion = 2; return nil }},
+		{name: "wrong strategy", prepare: func(_ *Store, _ *Observation, r *RecoveryEffectReceipt) error { r.StrategyVersion = 2; return nil }},
+		{name: "missing verifier", prepare: func(_ *Store, _ *Observation, r *RecoveryEffectReceipt) error { r.Verifier = ""; return nil }},
+		{name: "missing milestone", prepare: func(_ *Store, _ *Observation, r *RecoveryEffectReceipt) error { r.Milestone = ""; return nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, o, receipt := effectReceiptFixture(t, ctx)
+			require.NoError(t, tc.prepare(&s, &o, &receipt))
+			before, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+			require.NoError(t, err)
+			require.True(t, ok)
+			beforeBody, _ := json.Marshal(before.Body)
+			beforeLog, err := s.Durable.ListMutations(ctx, "w")
+			require.NoError(t, err)
+			beforeState, _, err := s.load(ctx, "w")
+			require.NoError(t, err)
+			require.ErrorIs(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", receipt), ErrStaleContract)
+			after, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+			require.NoError(t, err)
+			require.True(t, ok)
+			afterBody, _ := json.Marshal(after.Body)
+			afterLog, err := s.Durable.ListMutations(ctx, "w")
+			require.NoError(t, err)
+			afterState, _, err := s.load(ctx, "w")
+			require.NoError(t, err)
+			require.Equal(t, before.SHA256, after.SHA256)
+			require.Equal(t, before.UpdatedAt, after.UpdatedAt)
+			require.JSONEq(t, string(beforeBody), string(afterBody))
+			require.Equal(t, beforeLog, afterLog)
+			require.Equal(t, beforeState.Recoveries, afterState.Recoveries)
+			require.Equal(t, beforeState.RecoveryReceipts, afterState.RecoveryReceipts)
+		})
+	}
+	t.Run("valid current evidence", func(t *testing.T) {
+		s, _, receipt := effectReceiptFixture(t, ctx)
+		require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", receipt))
+		st, _, err := s.load(ctx, "w")
+		require.NoError(t, err)
+		require.Equal(t, "effect_verified", st.Recoveries["incident/1/1"].Status)
+	})
+}
+
+func effectReceiptFixture(t *testing.T, ctx context.Context) (Store, Observation, RecoveryEffectReceipt) {
+	t.Helper()
+	s := testStore(t)
+	o := observation("origin", true)
+	o.Tasks = []Task{{ID: "t", Head: "h", PlanVersion: 1, State: "active"}}
+	_, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	r := SolRecovery{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "request", ReceiptID: "accepted", ProposedAction: "run", ExpectedEffect: "pass", ActualModel: TierSol, ActualModelReceipt: "actual", Status: "decision_accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{"t"}}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	o.EventID, o.EvidenceID, o.ObservedAt = "effect", "effect-evidence", o.ObservedAt.Add(time.Minute)
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	return s, o, RecoveryEffectReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "verifier", Milestone: "milestone", ObservedAt: o.ObservedAt}
 }

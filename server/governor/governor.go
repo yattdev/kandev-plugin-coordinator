@@ -583,7 +583,7 @@ func (s Store) RecordSolRecurrenceReceipt(ctx context.Context, fence int64, work
 }
 func (s Store) VerifySolRecoveryEffectReceipt(ctx context.Context, fence int64, workspace string, receipt RecoveryEffectReceipt) error {
 	return s.transform(ctx, fence, workspace, func(st *state) error {
-		if receipt.IncidentID == "" || receipt.EventID != st.Last.EventID || receipt.EvidenceID != st.Last.EvidenceID || !st.Last.Complete || receipt.Verifier == "" || receipt.Milestone == "" {
+		if receipt.IncidentID == "" || receipt.EventID != st.Last.EventID || receipt.EvidenceID != st.Last.EvidenceID || !receipt.ObservedAt.Equal(st.Last.ObservedAt) || !st.Last.Complete || receipt.Verifier == "" || receipt.Milestone == "" {
 			return ErrStaleContract
 		}
 		for k, r := range st.Recoveries {
