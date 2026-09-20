@@ -194,6 +194,130 @@ func TestMissingOrRecurringSolEffectEscalatesAstraAndReplayIsIdempotent(t *testi
 	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
 }
 
+func TestMissedSolEffectEscalatesDespiteUnrelatedVerifiedProgress(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	o := observation("origin", true)
+	o.Tasks = []Task{{ID: "affected", State: "active"}, {ID: "unrelated", State: "active"}}
+	_, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	r := SolRecovery{IncidentID: "i", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "r", ReceiptID: "accepted", ProposedAction: "reproduce", ExpectedEffect: "pass", ActualModel: TierSol, ActualModelReceipt: "trusted", Status: "decision_accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Minute), AffectedTaskIDs: []string{"affected"}}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", r))
+	before, _, err := s.load(ctx, "w")
+	require.NoError(t, err)
+	beforeLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+	next := o
+	next.EventID, next.EvidenceID, next.ObservedAt = "unrelated-progress", "evidence-unrelated-progress", o.ObservedAt.Add(2*time.Minute)
+	next.Tasks[1].Head, next.Tasks[1].PlanVersion = "h", 1
+	next.Tasks[1].LastProgress, next.Tasks[1].VerifiedEvidence = next.ObservedAt, next.EvidenceID
+	next.Tasks[1].ProgressHead, next.Tasks[1].ProgressPlanVersion = "h", 1
+	next.Tasks[1].Verifier, next.Tasks[1].Milestone = "verifier", "unrelated-pass"
+	result, err := s.Observe(ctx, 0, next)
+	require.NoError(t, err)
+	require.Equal(t, TierAstra, result.Decision)
+	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
+	after, _, err := s.load(ctx, "w")
+	require.NoError(t, err)
+	require.Equal(t, before.Recoveries, after.Recoveries)
+	require.Equal(t, before.RecoveryReceipts, after.RecoveryReceipts)
+	stored := after.Recoveries["i/1/1"]
+	require.Equal(t, o.ObservedAt.Add(time.Minute), stored.EffectDueAt)
+	require.Equal(t, o.ObservedAt, stored.CompletedAt)
+	require.Equal(t, "decision_accepted", stored.Status)
+	require.Equal(t, []string{"affected"}, stored.AffectedTaskIDs)
+	afterLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+	require.Len(t, afterLog, len(beforeLog)+1)
+}
+
+func TestObserveAndRecoveryTransitionRaceHasOnlyAllowedOutcomes(t *testing.T) {
+	for _, transitionFirst := range []bool{true, false} {
+		t.Run(map[bool]string{true: "transition first", false: "observe first"}[transitionFirst], func(t *testing.T) {
+			s := testStore(t)
+			ctx := context.Background()
+			origin := observation("origin", true)
+			_, err := s.Observe(ctx, 0, origin)
+			require.NoError(t, err)
+			r := SolRecovery{IncidentID: "i", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: "r", ReceiptID: "requested", ActualModel: TierSol, ActualModelReceipt: "trusted", Status: "requested", StrategyVersion: 1, PlanVersion: 1, CompletedAt: origin.ObservedAt}
+			next := observation("next", true)
+			next.ObservedAt = origin.ObservedAt.Add(time.Minute)
+			oracle := testStore(t)
+			_, err = oracle.Observe(ctx, 0, origin)
+			require.NoError(t, err)
+			if transitionFirst {
+				require.NoError(t, oracle.RecordSolRecovery(ctx, 0, "w", r))
+				_, err = oracle.Observe(ctx, 0, next)
+				require.NoError(t, err)
+			} else {
+				_, err = oracle.Observe(ctx, 0, next)
+				require.NoError(t, err)
+				require.ErrorIs(t, oracle.RecordSolRecovery(ctx, 0, "w", r), ErrStaleContract)
+			}
+			transition, observer := s, s
+			readyT, readyO, releaseT, releaseO := make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{}), make(chan struct{})
+			transition.beforeCheckpointForTest = func(_ context.Context, attempt int) error {
+				if attempt == 0 {
+					readyT <- struct{}{}
+					<-releaseT
+				}
+				return nil
+			}
+			observer.beforeCheckpointForTest = func(_ context.Context, attempt int) error {
+				if attempt == 0 {
+					readyO <- struct{}{}
+					<-releaseO
+				}
+				return nil
+			}
+			observeErr, transitionErr := make(chan error, 1), make(chan error, 1)
+			go func() { _, err := observer.Observe(ctx, 0, next); observeErr <- err }()
+			go func() { transitionErr <- transition.RecordSolRecovery(ctx, 0, "w", r) }()
+			<-readyT
+			<-readyO
+			if transitionFirst {
+				close(releaseT)
+				require.NoError(t, <-transitionErr)
+				close(releaseO)
+				require.NoError(t, <-observeErr)
+			} else {
+				close(releaseO)
+				require.NoError(t, <-observeErr)
+				close(releaseT)
+				require.ErrorIs(t, <-transitionErr, ErrStaleContract)
+			}
+			mutations, err := s.Durable.ListMutations(ctx, "w")
+			require.NoError(t, err)
+			st, _, err := s.load(ctx, "w")
+			require.NoError(t, err)
+			if transitionFirst {
+				require.Len(t, mutations, 3)
+				require.Contains(t, st.Recoveries, "i/1/1")
+				require.Contains(t, st.RecoveryReceipts, "requested")
+			} else {
+				require.Len(t, mutations, 2)
+				require.Empty(t, st.Recoveries)
+				require.Empty(t, st.RecoveryReceipts)
+			}
+			requireEquivalentGovernorState(t, ctx, s, oracle)
+		})
+	}
+}
+
+func requireEquivalentGovernorState(t *testing.T, ctx context.Context, got, want Store) {
+	t.Helper()
+	gotState, gotFound, gotLoadErr := got.load(ctx, "w")
+	wantState, wantFound, wantLoadErr := want.load(ctx, "w")
+	require.Equal(t, wantLoadErr, gotLoadErr)
+	require.Equal(t, wantFound, gotFound)
+	require.Equal(t, wantState, gotState)
+	gotRecord, gotRecordFound, gotRecordErr := got.Durable.GetRecord(ctx, "w", stateRecordID)
+	wantRecord, wantRecordFound, wantRecordErr := want.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.Equal(t, wantRecordErr, gotRecordErr)
+	require.Equal(t, wantRecordFound, gotRecordFound)
+	require.Equal(t, wantRecord.SHA256, gotRecord.SHA256)
+}
+
 func TestRecoveryUsesStableRequestAndDistinctReceiptIdentity(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

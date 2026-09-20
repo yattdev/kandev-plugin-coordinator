@@ -182,6 +182,10 @@ type Store struct {
 	Durable *durablestate.Store
 	Now     func() time.Time
 	Config  Config
+	// beforeCheckpointForTest is nil in production. Tests may use a Store copy
+	// to deterministically pause a transform after serialization and before its
+	// durable write; transform snapshots it once per invocation.
+	beforeCheckpointForTest func(context.Context, int) error
 }
 
 func (s Store) Observe(ctx context.Context, fence int64, in Observation) (Result, error) {
@@ -290,6 +294,7 @@ func (s Store) load(ctx context.Context, workspace string) (state, bool, error) 
 // swapped.  A conflict is retried from a newly decoded record; callers never
 // write a body derived from a stale read.
 func (s Store) transform(ctx context.Context, fence int64, workspace string, fn func(*state) error) error {
+	beforeCheckpoint := s.beforeCheckpointForTest
 	for attempt := 0; attempt != 8; attempt++ {
 		rec, found, err := s.Durable.GetRecord(ctx, workspace, stateRecordID)
 		if err != nil {
@@ -313,6 +318,11 @@ func (s Store) transform(ctx context.Context, fence int64, workspace string, fn 
 		body, err := toBody(st)
 		if err != nil {
 			return err
+		}
+		if beforeCheckpoint != nil {
+			if err := beforeCheckpoint(ctx, attempt); err != nil {
+				return err
+			}
 		}
 		if !found {
 			_, err = s.Durable.AppendAdd(ctx, workspace, fence, stateRecordID, durablestate.KindShadowGovernor, body, durablestate.StorageInline)
