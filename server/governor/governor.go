@@ -545,22 +545,10 @@ func (s Store) VerifySolRecoveryEffect(ctx context.Context, fence int64, workspa
 	})
 }
 func (s Store) RecordSolRecurrence(ctx context.Context, fence int64, workspace, incident, recurrenceID string) error {
-	return s.transform(ctx, fence, workspace, func(st *state) error {
-		if recurrenceID == "" {
-			return ErrStaleContract
-		}
-		for k, r := range st.Recoveries {
-			if r.IncidentID == incident {
-				if r.EffectEvidenceID == "" || r.RecurrenceID != "" {
-					return ErrStaleContract
-				}
-				r.RecurrenceID = recurrenceID
-				st.Recoveries[k] = r
-				return nil
-			}
-		}
-		return ErrStaleContract
-	})
+	// The legacy signature cannot bind a recurrence to the complete current
+	// observation, generation, and immutable receipt. Refuse it rather than
+	// let it bypass RecordSolRecurrenceReceipt's durable proof requirements.
+	return ErrStaleContract
 }
 func (s Store) RecordSolRecurrenceReceipt(ctx context.Context, fence int64, workspace string, receipt RecoveryRecurrenceReceipt) error {
 	return s.transform(ctx, fence, workspace, func(st *state) error {
@@ -596,32 +584,28 @@ func (s Store) VerifySolRecoveryEffectReceipt(ctx context.Context, fence int64, 
 		if receipt.IncidentID == "" || receipt.EventID != st.Last.EventID || receipt.EvidenceID != st.Last.EvidenceID || !receipt.ObservedAt.Equal(st.Last.ObservedAt) || !st.Last.Complete || receipt.Verifier == "" || receipt.Milestone == "" {
 			return ErrStaleContract
 		}
-		for k, r := range st.Recoveries {
-			if r.IncidentID != receipt.IncidentID {
-				continue
-			}
-			if r.Status != "decision_accepted" || r.EffectEvidenceID != "" || !st.Last.ObservedAt.After(r.CompletedAt) || receipt.StrategyVersion != r.StrategyVersion || receipt.PlanVersion != r.PlanVersion {
-				return ErrStaleContract
-			}
-			found := false
-			for _, id := range r.AffectedTaskIDs {
-				if id == receipt.TaskID {
-					found = true
-				}
-			}
-			if !found {
-				return ErrStaleContract
-			}
-			for _, t := range st.Last.Tasks {
-				if t.ID == receipt.TaskID && t.Head == receipt.Head && t.PlanVersion == receipt.PlanVersion {
-					r.EffectEvidenceID = receipt.EvidenceID
-					r.EffectVerifiedAt = st.Last.ObservedAt
-					r.Status = "effect_verified"
-					st.Recoveries[k] = r
-					return nil
-				}
-			}
+		key := receipt.IncidentID + "/" + fmt.Sprint(receipt.StrategyVersion) + "/" + fmt.Sprint(receipt.PlanVersion)
+		r, ok := st.Recoveries[key]
+		if !ok || r.Status != "decision_accepted" || r.EffectEvidenceID != "" || !st.Last.ObservedAt.After(r.CompletedAt) {
 			return ErrStaleContract
+		}
+		found := false
+		for _, id := range r.AffectedTaskIDs {
+			if id == receipt.TaskID {
+				found = true
+			}
+		}
+		if !found {
+			return ErrStaleContract
+		}
+		for _, t := range st.Last.Tasks {
+			if t.ID == receipt.TaskID && t.Head == receipt.Head && t.PlanVersion == receipt.PlanVersion {
+				r.EffectEvidenceID = receipt.EvidenceID
+				r.EffectVerifiedAt = st.Last.ObservedAt
+				r.Status = "effect_verified"
+				st.Recoveries[key] = r
+				return nil
+			}
 		}
 		return ErrStaleContract
 	})

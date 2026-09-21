@@ -92,6 +92,86 @@ func TestRecoveryRecurrenceRequiresLatestMatchingCompleteEvidence(t *testing.T) 
 	require.Contains(t, result.Reasons, "ineffective_sol_recovery")
 }
 
+func TestLegacyRecurrenceCannotBypassReceiptBinding(t *testing.T) {
+	ctx := context.Background()
+	s, _, receipt := effectReceiptFixture(t, ctx)
+	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", receipt))
+	before, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	beforeBody, err := json.Marshal(before.Body)
+	require.NoError(t, err)
+	beforeLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+
+	require.ErrorIs(t, s.RecordSolRecurrence(ctx, 0, "w", "incident", "unbound-legacy"), ErrStaleContract)
+
+	after, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	afterBody, err := json.Marshal(after.Body)
+	require.NoError(t, err)
+	afterLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+	require.Equal(t, before.SHA256, after.SHA256)
+	require.Equal(t, before.UpdatedAt, after.UpdatedAt)
+	require.JSONEq(t, string(beforeBody), string(afterBody))
+	require.Equal(t, beforeLog, afterLog)
+}
+
+func TestRecoveryEffectReceiptSelectsExactGeneration(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	o := observation("generation-one", true)
+	o.Tasks = []Task{{ID: "t", Head: "h", PlanVersion: 1, State: "active"}}
+	_, err := s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	first := SolRecovery{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, RequestID: "request-one", ReceiptID: "accepted-one", ProposedAction: "run", ExpectedEffect: "pass", ActualModel: TierSol, ActualModelReceipt: "actual-one", Status: "decision_accepted", Accepted: true, StrategyVersion: 1, PlanVersion: 1, CompletedAt: o.ObservedAt, EffectDueAt: o.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{"t"}}
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", first))
+
+	o.EventID, o.EvidenceID, o.StrategyVersion, o.PlanVersion, o.ObservedAt = "generation-two", "generation-two-evidence", 2, 2, o.ObservedAt.Add(time.Minute)
+	o.Tasks[0].PlanVersion = 2
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	second := first
+	second.EventID, second.EvidenceID, second.RequestID, second.ReceiptID = o.EventID, o.EvidenceID, "request-two", "accepted-two"
+	second.ActualModelReceipt, second.StrategyVersion, second.PlanVersion, second.CompletedAt = "actual-two", 2, 2, o.ObservedAt
+	second.EffectDueAt = o.ObservedAt.Add(time.Hour)
+	require.NoError(t, s.RecordSolRecovery(ctx, 0, "w", second))
+
+	o.EventID, o.EvidenceID, o.ObservedAt = "effect", "effect-evidence", o.ObservedAt.Add(time.Minute)
+	_, err = s.Observe(ctx, 0, o)
+	require.NoError(t, err)
+	receipt := RecoveryEffectReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 2, StrategyVersion: 2, Verifier: "verifier", Milestone: "milestone", ObservedAt: o.ObservedAt}
+	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", receipt))
+	st, _, err := s.load(ctx, "w")
+	require.NoError(t, err)
+	require.Equal(t, "decision_accepted", st.Recoveries["incident/1/1"].Status)
+	require.Equal(t, "effect_verified", st.Recoveries["incident/2/2"].Status)
+
+	before, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	beforeBody, err := json.Marshal(before.Body)
+	require.NoError(t, err)
+	beforeLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+	wrong := receipt
+	wrong.PlanVersion = 1
+	require.ErrorIs(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", wrong), ErrStaleContract)
+	after, ok, err := s.Durable.GetRecord(ctx, "w", stateRecordID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	afterBody, err := json.Marshal(after.Body)
+	require.NoError(t, err)
+	afterLog, err := s.Durable.ListMutations(ctx, "w")
+	require.NoError(t, err)
+	require.Equal(t, before.SHA256, after.SHA256)
+	require.Equal(t, before.UpdatedAt, after.UpdatedAt)
+	require.JSONEq(t, string(beforeBody), string(afterBody))
+	require.Equal(t, beforeLog, afterLog)
+}
+
 func TestRecoveryRecurrenceReceiptReplaySurvivesReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "replay.db")
