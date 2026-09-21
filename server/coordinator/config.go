@@ -18,16 +18,17 @@ const (
 )
 
 type Config struct {
-	AgentProfile         string `json:"agent_profile"`
-	MonitoringEnabled    bool   `json:"monitoring_enabled"`
-	CycleIntervalMinutes int    `json:"cycle_interval_minutes"`
-	ScheduleDays         string `json:"schedule_days"`
-	WindowStart          string `json:"monitoring_window_start"`
-	WindowEnd            string `json:"monitoring_window_end"`
-	DailyReportTime      string `json:"daily_report_time"`
-	Timezone             string `json:"timezone"`
-	BasePrompt           string `json:"base_prompt"`
-	ReportTemplate       string `json:"report_template"`
+	AgentProfile          string `json:"agent_profile"`
+	MonitoringEnabled     bool   `json:"monitoring_enabled"`
+	ShadowGovernorEnabled bool   `json:"shadow_governor_enabled"`
+	CycleIntervalMinutes  int    `json:"cycle_interval_minutes"`
+	ScheduleDays          string `json:"schedule_days"`
+	WindowStart           string `json:"monitoring_window_start"`
+	WindowEnd             string `json:"monitoring_window_end"`
+	DailyReportTime       string `json:"daily_report_time"`
+	Timezone              string `json:"timezone"`
+	BasePrompt            string `json:"base_prompt"`
+	ReportTemplate        string `json:"report_template"`
 }
 
 func ConfigFrom(values map[string]any) (Config, error) {
@@ -59,6 +60,13 @@ func ConfigFrom(values map[string]any) (Config, error) {
 			return Config{}, fmt.Errorf("monitoring_enabled: %w", err)
 		}
 		config.MonitoringEnabled = parsed
+	}
+	if value, ok := values["shadow_governor_enabled"]; ok {
+		parsed, err := boolValue(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("shadow_governor_enabled: %w", err)
+		}
+		config.ShadowGovernorEnabled = parsed
 	}
 	if value, ok := values["cycle_interval_minutes"]; ok {
 		parsed, err := intValue(value)

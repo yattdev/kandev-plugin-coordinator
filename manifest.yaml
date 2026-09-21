@@ -28,6 +28,9 @@ actions:
   - key: "coordinator.status"
     scope: "workspace"
     max_body_bytes: 1024
+  - key: "coordinator.shadow-observe"
+    scope: "workspace"
+    max_body_bytes: 65536
   - key: "coordinator.reports"
     scope: "workspace"
     max_body_bytes: 4096

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
-
 	"kandev-plugin-coordinator/server/durablestate"
+	"kandev-plugin-coordinator/server/governor"
 )
 
 type Plugin struct {
@@ -22,10 +22,21 @@ type Plugin struct {
 	runnerMu        sync.Mutex
 	runnerCancel    context.CancelFunc
 	runnerDone      chan struct{}
+	shadowObserver  ShadowObserver
 	policyMu        sync.Mutex
 	policyStore     *durablestate.Store
 	policyStorePath string
 }
+
+// ShadowObserver is the explicit, opt-in observation boundary for the shadow
+// governor. Production wiring must provide a plugin-owned durable store; the
+// default plugin intentionally leaves it nil rather than collecting live board
+// data with permissions this manifest does not grant.
+type ShadowObserver interface {
+	Observe(context.Context, governor.Observation) (governor.Result, error)
+}
+
+func (p *Plugin) SetShadowObserver(observer ShadowObserver) { p.shadowObserver = observer }
 
 var (
 	_ pluginsdk.Plugin          = (*Plugin)(nil)
