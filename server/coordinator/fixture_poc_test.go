@@ -133,6 +133,13 @@ func TestUnverifiedFixtureProjectionReopensUnknown(t *testing.T) {
 	defer d.Close()
 	_, err = loadFixtureBoard(ctx, d, "fixture-operation-1")
 	require.ErrorIs(t, err, ErrFixtureOutcomeUnknown)
+	store := governor.Store{Durable: d, Now: func() time.Time { return time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC) }}
+	origin := fixtureObservation("origin", "evidence", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
+	board := newFixtureBoard()
+	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction, EvidenceID: origin.EvidenceID}
+	_, err = applyFixtureGrant(ctx, New(), store, board, &grant, origin, "fixture-operation-1", "blocked-target", fixtureAction)
+	require.ErrorIs(t, err, ErrFixtureOutcomeUnknown)
+	require.Equal(t, 0, board.mutations)
 }
 
 func TestFixtureReaderFailureFailsClosed(t *testing.T) {
@@ -140,4 +147,11 @@ func TestFixtureReaderFailureFailsClosed(t *testing.T) {
 	board.reader.listErr = errors.New("list failed")
 	_, err := board.Read(context.Background())
 	require.ErrorContains(t, err, "list failed")
+}
+
+func TestFixtureReaderIncompleteCursorFailsClosed(t *testing.T) {
+	board := newFixtureBoard()
+	board.reader.badCursor = true
+	_, err := board.Read(context.Background())
+	require.ErrorIs(t, err, ErrFixtureGrantDenied)
 }

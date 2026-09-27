@@ -56,8 +56,9 @@ type fixtureBoard struct {
 	reader    *fixtureTaskReader
 }
 type fixtureTaskReader struct {
-	rows    map[string]pluginsdk.Task
-	listErr error
+	rows      map[string]pluginsdk.Task
+	listErr   error
+	badCursor bool
 }
 
 var _ pluginsdk.TaskReader = (*fixtureTaskReader)(nil)
@@ -74,6 +75,9 @@ func (r *fixtureTaskReader) List(_ context.Context, _ pluginsdk.TaskFilter, page
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if page.Cursor == "" && r.badCursor {
+		return out[:1], &pluginsdk.PageInfo{HasMore: true}, nil
+	}
 	if page.Cursor == "" && len(out) > 1 {
 		return out[:1], &pluginsdk.PageInfo{HasMore: true, NextCursor: "1"}, nil
 	}
@@ -320,7 +324,10 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 		savedAction, aok := prior.Body["action"].(string)
 		savedGrant, gok := prior.Body["grant"].(string)
 		verified, vok := prior.Body["verified"].(bool)
-		if !sok || !rok || !tok || !aok || !gok || !vok || !verified || savedTarget != target || savedAction != action || savedGrant != grant.ID {
+		if !vok || !verified {
+			return FixtureReadback{}, ErrFixtureOutcomeUnknown
+		}
+		if !sok || !rok || !tok || !aok || !gok || savedTarget != target || savedAction != action || savedGrant != grant.ID {
 			return FixtureReadback{}, ErrFixtureGrantDenied
 		}
 		return FixtureReadback{OperationID: operationID, TaskID: target, State: state, Receipt: receipt, Replay: true}, nil
