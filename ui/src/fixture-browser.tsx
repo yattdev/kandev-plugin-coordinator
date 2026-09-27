@@ -4,7 +4,11 @@ import { createCoordinatorPage } from "./coordinator-page";
 import type { CoordinatorHost, EnsureResponse, ReportPage, RunResponse } from "./contracts";
 
 type Scenario = "configuration" | "reports" | "denied" | "recovery";
-type Action = { key: string; input?: { workspaceId?: string; body?: unknown } };
+type Action = {
+  key: string;
+  input?: { workspaceId?: string; body?: unknown };
+  outcome: { status: "success"; value: unknown } | { status: "error"; message: string };
+};
 
 declare global {
   interface Window {
@@ -52,32 +56,40 @@ function fixtureHost(scenario: Scenario): CoordinatorHost {
   };
   const t = (key: string) => translations[key] ?? key;
   const invokeAction = async <T,>(key: string, input?: { workspaceId?: string; body?: unknown }): Promise<T> => {
-    actions.push({ key, input });
+    const recordedInput = input === undefined ? undefined : JSON.parse(JSON.stringify(input));
+    const succeed = (value: T): T => {
+      actions.push({ key, input: recordedInput, outcome: { status: "success", value: JSON.parse(JSON.stringify(value)) } });
+      return value;
+    };
+    const fail = (message: string): never => {
+      actions.push({ key, input: recordedInput, outcome: { status: "error", message } });
+      throw new Error(message);
+    };
     if (key === "coordinator.ensure") {
       const response: EnsureResponse = scenario === "configuration"
         ? { status: "configuration_required" }
         : { status: "ready", conversation: { workspace_id: "fixture-workspace", key: "coordinator", status: "ready" } };
-      return response as T;
+      return succeed(response as T);
     }
     if (key === "coordinator.reports") {
       const cursor = (input?.body as { cursor?: string } | undefined)?.cursor ?? "";
       if (scenario === "recovery" && !recoveryFailed) {
         recoveryFailed = true;
-        throw new Error("Transient fixture report failure");
+        return fail("Transient fixture report failure");
       }
       const response: ReportPage = cursor === "page-2"
         ? { reports: [report("report-2", "Recovered inventory") ] }
         : { reports: [report("report-1", "Workspace inventory")], next_cursor: "page-2" };
-      return response as T;
+      return succeed(response as T);
     }
     if (key === "coordinator.run-cycle" || key === "coordinator.run-standup") {
-      if (scenario === "denied") throw new Error("Denied by fixture; zero simulated effects recorded.");
+      if (scenario === "denied") return fail("Denied by fixture; zero simulated effects recorded.");
       simulatedEffects += 1;
       window.__coordinatorFixture!.simulatedEffects = simulatedEffects;
       const response: RunResponse = { dispatch: { status: "queued", occurrence_key: "fixture-occurrence" } };
-      return response as T;
+      return succeed(response as T);
     }
-    throw new Error(`Unexpected fixture action: ${key}`);
+    return fail(`Unexpected fixture action: ${key}`);
   };
   return {
     React,
@@ -100,5 +112,7 @@ function fixtureHost(scenario: Scenario): CoordinatorHost {
   };
 }
 
+// Keep the production client's generated idempotency input stable in this fixture.
+Object.defineProperty(window.crypto, "randomUUID", { value: () => "00000000-0000-4000-8000-000000000001" });
 const Page = createCoordinatorPage(fixtureHost(scenarioFromLocation()));
 createRoot(document.getElementById("root")!).render(React.createElement(Page as React.ComponentType));

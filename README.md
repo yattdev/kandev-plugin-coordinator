@@ -118,7 +118,10 @@ make verify-package-host
 `npm run test:ui:browser` runs the Coordinator page in Playwright through a
 typed in-memory `CoordinatorHost`. It records screenshots in the ignored
 `test-results/` directory for configuration, report pagination, denied action,
-and recovery/run states. This is synthetic fixture evidence only: it does not
+and recovery/run states. Each browser scenario also asserts the JSON-safe trace
+of action inputs and success/error outcomes at the existing UI client boundary;
+the fixture fixes the generated run key so these traces are reproducible. This
+is synthetic fixture evidence only: it does not
 call a Host, board, provider, or credentials, and it does not replace later
 typed live-fork Host integration/E2E or the Stage 2 QA contract.
 
