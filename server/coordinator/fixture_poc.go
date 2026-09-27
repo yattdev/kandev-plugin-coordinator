@@ -48,6 +48,8 @@ type fixtureBoard struct {
 }
 type fixtureTaskReader struct{ rows map[string]pluginsdk.Task }
 
+var _ pluginsdk.TaskReader = (*fixtureTaskReader)(nil)
+
 func newFixtureTaskReader() *fixtureTaskReader {
 	return &fixtureTaskReader{rows: map[string]pluginsdk.Task{"done-dependency": {ID: "done-dependency", WorkspaceID: "fixture-workspace", State: "Done"}, "blocked-target": {ID: "blocked-target", WorkspaceID: "fixture-workspace", State: "Blocked", Metadata: map[string]any{"dependencies": []string{"done-dependency"}}}, "in-progress": {ID: "in-progress", WorkspaceID: "fixture-workspace", State: "InProgress"}}}
 }
