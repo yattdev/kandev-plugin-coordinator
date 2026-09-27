@@ -92,3 +92,20 @@ func TestFixtureGrantReplaySurvivesStoreReopen(t *testing.T) {
 	require.True(t, replay.Replay)
 	require.Equal(t, 1, board.mutations)
 }
+
+func TestUnverifiedFixtureProjectionReopensUnknown(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "interrupted.db")
+	d, err := durablestate.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Migrate(ctx))
+	_, err = d.AppendAdd(ctx, "fixture-workspace", 0, "fixture-operation-1", durablestate.KindDoneReceipt, map[string]any{"state": "Ready", "receipt": "r", "target": "blocked-target", "action": fixtureAction, "grant": "g", "operation": "fixture-operation-1", "verified": false}, durablestate.StorageInline)
+	require.NoError(t, err)
+	require.NoError(t, d.Close())
+	d, err = durablestate.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Migrate(ctx))
+	defer d.Close()
+	_, err = loadFixtureBoard(ctx, d)
+	require.ErrorIs(t, err, ErrFixtureOutcomeUnknown)
+}
