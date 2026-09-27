@@ -69,6 +69,12 @@ type fixtureTaskReader struct {
 	durable   *durablestate.Store
 }
 
+type fixtureOperationContextKey struct{}
+type fixtureOperationContext struct {
+	operationID string
+	applied     *bool
+}
+
 var _ pluginsdk.TaskReader = (*fixtureTaskReader)(nil)
 
 // fixtureHost is a local typed Host double. The POC reaches the task adapter
@@ -130,7 +136,10 @@ func newFixtureTaskReader(ctx context.Context, durable *durablestate.Store) (*fi
 	}
 	return r, nil
 }
-func (r *fixtureTaskReader) List(_ context.Context, _ pluginsdk.TaskFilter, page pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
+func (r *fixtureTaskReader) List(ctx context.Context, _ pluginsdk.TaskFilter, page pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
+	if err := r.refresh(ctx); err != nil {
+		return nil, nil, err
+	}
 	if r.listErr != nil {
 		return nil, nil, r.listErr
 	}
@@ -150,7 +159,10 @@ func (r *fixtureTaskReader) List(_ context.Context, _ pluginsdk.TaskFilter, page
 	}
 	return nil, nil, ErrFixtureGrantDenied
 }
-func (r *fixtureTaskReader) Get(_ context.Context, id string) (*pluginsdk.Task, error) {
+func (r *fixtureTaskReader) Get(ctx context.Context, id string) (*pluginsdk.Task, error) {
+	if err := r.refresh(ctx); err != nil {
+		return nil, err
+	}
 	t, ok := r.rows[id]
 	if !ok {
 		return nil, ErrFixtureGrantDenied
@@ -162,27 +174,96 @@ func (r *fixtureTaskReader) Create(context.Context, pluginsdk.CreateTaskInput) (
 }
 func (r *fixtureTaskReader) Update(ctx context.Context, in pluginsdk.UpdateTaskInput) (*pluginsdk.Task, error) {
 	t, ok := r.rows[in.ID]
-	if !ok || in.State == nil {
+	op, authorized := ctx.Value(fixtureOperationContextKey{}).(fixtureOperationContext)
+	if !ok || in.State == nil || *in.State != "Ready" || !authorized || op.applied == nil {
 		return nil, ErrFixtureGrantDenied
 	}
-	if r.durable != nil {
-		body := map[string]any{"task_id": in.ID, "state": *in.State}
-		_, found, err := r.durable.GetRecord(ctx, "fixture-workspace", fixtureBoardRecordID(in.ID))
-		if err != nil {
-			return nil, err
-		}
-		if found {
-			_, err = r.durable.AppendUpdate(ctx, "fixture-workspace", 0, fixtureBoardRecordID(in.ID), body, durablestate.StorageInline)
-		} else {
-			_, err = r.durable.AppendAdd(ctx, "fixture-workspace", 0, fixtureBoardRecordID(in.ID), durablestate.KindDirtyTask, body, durablestate.StorageInline)
-		}
-		if err != nil {
-			return nil, err
-		}
+	applied, err := r.applyReady(ctx, in.ID, op.operationID, fixtureAction)
+	if err != nil {
+		return nil, err
 	}
-	t.State = *in.State
+	*op.applied = applied
+	t.State = "Ready"
 	r.rows[in.ID] = t
 	return &t, nil
+}
+
+func (r *fixtureTaskReader) refresh(ctx context.Context) error {
+	if r.durable == nil {
+		return nil
+	}
+	for id, task := range r.rows {
+		record, found, err := r.durable.GetRecord(ctx, "fixture-workspace", fixtureBoardRecordID(id))
+		if err != nil {
+			return err
+		}
+		if !found {
+			continue
+		}
+		recordedID, idOK := record.Body["task_id"].(string)
+		state, stateOK := record.Body["state"].(string)
+		if !idOK || !stateOK || recordedID != id || (state != task.State && state != "Ready") {
+			return ErrFixtureOutcomeUnknown
+		}
+		task.State = state
+		r.rows[id] = task
+	}
+	return nil
+}
+
+// applyReady performs an operation-bound conditional transition. A cached
+// fixture reader may be stale, so the durable task projection is authoritative.
+// CompareAndSwapRecord makes two adapters racing from Blocked produce at most
+// one durable effect; a loser that observes Ready reconciles as a replay.
+func (r *fixtureTaskReader) applyReady(ctx context.Context, target, operationID, action string) (bool, error) {
+	if action != fixtureAction || operationID == "" || r.durable == nil {
+		return false, ErrFixtureGrantDenied
+	}
+	op, found, err := r.durable.GetRecord(ctx, "fixture-workspace", operationID)
+	if err != nil {
+		return false, err
+	}
+	if !found || op.Body["phase"] != "pending" || op.Body["target"] != target || op.Body["action"] != action {
+		return false, ErrFixtureGrantDenied
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		record, found, err := r.durable.GetRecord(ctx, "fixture-workspace", fixtureBoardRecordID(target))
+		if err != nil {
+			return false, err
+		}
+		if found {
+			id, idOK := record.Body["task_id"].(string)
+			state, stateOK := record.Body["state"].(string)
+			if !idOK || !stateOK || id != target || (state != "Blocked" && state != "Ready") {
+				return false, ErrFixtureOutcomeUnknown
+			}
+			if state == "Ready" {
+				if task, ok := r.rows[target]; ok {
+					task.State = "Ready"
+					r.rows[target] = task
+				}
+				return false, nil
+			}
+			body := map[string]any{"task_id": target, "state": "Ready"}
+			_, err = r.durable.CompareAndSwapRecord(ctx, "fixture-workspace", 0, fixtureBoardRecordID(target), record.SHA256, body, durablestate.StorageInline)
+			if err == nil {
+				task := r.rows[target]
+				task.State = "Ready"
+				r.rows[target] = task
+				return true, nil
+			}
+			if !errors.Is(err, durablestate.ErrRecordConflict) {
+				return false, err
+			}
+			continue
+		}
+		_, err = r.durable.AppendAdd(ctx, "fixture-workspace", 0, fixtureBoardRecordID(target), durablestate.KindDirtyTask, map[string]any{"task_id": target, "state": "Blocked"}, durablestate.StorageInline)
+		if err == nil || errors.Is(err, durablestate.ErrRecordAlreadyExists) {
+			continue
+		}
+		return false, err
+	}
+	return false, ErrFixtureOutcomeUnknown
 }
 
 func fixtureBoardRecordID(taskID string) string { return "fixture-board/" + taskID }
@@ -258,25 +339,33 @@ func (b *fixtureBoard) Read(ctx context.Context) ([]governor.Task, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
-func (b *fixtureBoard) Apply(target, action string) error {
+func (b *fixtureBoard) Apply(ctx context.Context, target, action, operationID string) (bool, error) {
 	if action != fixtureAction {
-		return ErrFixtureGrantDenied
+		return false, ErrFixtureGrantDenied
 	}
 	t, ok := b.tasks[target]
 	if !ok || t.State != "Blocked" {
-		return ErrFixtureGrantDenied
+		return false, ErrFixtureGrantDenied
 	}
 	t.State = "Ready"
 	if b.reader != nil {
+		if action != fixtureAction {
+			return false, ErrFixtureGrantDenied
+		}
+		applied := false
+		updateCtx := context.WithValue(ctx, fixtureOperationContextKey{}, fixtureOperationContext{operationID: operationID, applied: &applied})
 		state := "Ready"
-		if _, err := b.reader.Update(context.Background(), pluginsdk.UpdateTaskInput{ID: target, State: &state}); err != nil {
-			return err
+		if _, err := b.reader.Update(updateCtx, pluginsdk.UpdateTaskInput{ID: target, State: &state}); err != nil {
+			return false, err
+		}
+		if !applied {
+			return false, nil
 		}
 	}
 	t.BlockerReason = ""
 	b.tasks[target] = t
 	b.mutations++
-	return nil
+	return true, nil
 }
 
 // RunFixturePOC is the runnable Stage 0 driver. Its two snapshots traverse
@@ -394,9 +483,10 @@ func fixtureTarget(result governor.Result) (string, error) {
 }
 
 type fixtureApplyHooks struct {
-	BeforeOperationRecord func() error
-	AfterEffect           func() error
-	BeforeFinalRecord     func() error
+	BeforeOperationRecord   func() error
+	AfterGovernorAcceptance func() error
+	AfterEffect             func() error
+	BeforeFinalRecord       func() error
 }
 
 func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, grant *FixtureGrant, origin governor.Observation, operationID, target, action string) (FixtureReadback, error) {
@@ -461,6 +551,11 @@ func applyFixtureGrantWithHooks(ctx context.Context, p *Plugin, store governor.S
 		if err := recordFixtureRecovery(ctx, store, origin, operationID, target, action, grant.ID); err != nil {
 			return FixtureReadback{}, fmt.Errorf("%w: %v", ErrFixtureGrantDenied, err)
 		}
+		if hooks.AfterGovernorAcceptance != nil {
+			if err := hooks.AfterGovernorAcceptance(); err != nil {
+				return FixtureReadback{}, err
+			}
+		}
 		projection := map[string]any{"phase": "pending", "target": target, "action": action, "grant": grant.ID, "evidence": origin.EvidenceID, "operation": operationID, "verified": false}
 		if _, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, projection, durablestate.StorageInline); err != nil {
 			return FixtureReadback{}, err
@@ -472,8 +567,12 @@ func applyFixtureGrantWithHooks(ctx context.Context, p *Plugin, store governor.S
 		return FixtureReadback{}, fmt.Errorf("%w: %v", ErrFixtureGrantDenied, err)
 	}
 	grant.Used = true
-	if err := board.Apply(target, action); err != nil {
+	applied, err := board.Apply(ctx, target, action, operationID)
+	if err != nil {
 		return FixtureReadback{}, err
+	}
+	if !applied {
+		return finishFixtureGrant(ctx, p, store, board, origin, operationID, target, action, grant.ID, true, hooks)
 	}
 	if hooks.AfterEffect != nil {
 		if err := hooks.AfterEffect(); err != nil {
