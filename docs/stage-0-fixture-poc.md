@@ -1,12 +1,13 @@
 # Stage 0 synthetic-board POC
 
-Run `go run ./cmd/fixture-poc`. The driver submits two normalized fixture
-snapshots through `Plugin.HandleAction` and `coordinator.shadow-observe`, then
-uses the existing shadow-governor recovery receipt verification for its typed
-effect readback. The fixture contains a Blocked target, a Done dependency, and
-an InProgress task. Its deterministic selection issues one exact
-`fixture.unblock` grant for `blocked-target`; competing, revoked, and replayed
-uses are denied by focused tests.
+Run `go run ./cmd/fixture-poc`. A fixture-only SDK-shaped `TaskReader` lists
+and updates the three synthetic task rows, which are normalized through
+`Plugin.HandleAction` and `coordinator.shadow-observe`. The typed JSON report
+contains before/after inventories, the Blocked target's Done dependency,
+selected action and exact grant, independent effect readback, and actual
+competing-target, revoked-grant, and stale-evidence denial receipts. Durable
+operation projections rehydrate the fixture after restart; an unverified
+projection reports an unknown outcome rather than a verified effect.
 
 This is only a local deterministic fixture. It has no real Kandev board,
 Host task mutation, provider, credential, scheduler, deployment, merge, or
