@@ -30,7 +30,11 @@ type FixturePOCReport struct {
 	Readback FixtureReadback `json:"readback"`
 	Before   []governor.Task `json:"before"`
 	After    []governor.Task `json:"after"`
-	Denials  []string        `json:"denials"`
+	Denials  []FixtureDenial `json:"denials"`
+}
+type FixtureDenial struct {
+	Reason   string `json:"reason"`
+	TargetID string `json:"target_id"`
 }
 
 type FixtureGrant struct {
@@ -226,6 +230,18 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 		return FixturePOCReport{}, err
 	}
 	grant := FixtureGrant{ID: "fixture-grant-1", TargetID: target, Action: fixtureAction}
+	denials := []FixtureDenial{}
+	for _, trial := range []struct {
+		reason, target string
+		revoked        bool
+	}{{"competing_target", "in-progress", false}, {"revoked_grant", target, true}} {
+		g := grant
+		g.Revoked = trial.revoked
+		if _, err := applyFixtureGrant(ctx, p, store, board, &g, origin, "denied-"+trial.reason, trial.target, fixtureAction); !errors.Is(err, ErrFixtureGrantDenied) {
+			return FixturePOCReport{}, fmt.Errorf("fixture POC: expected denial")
+		}
+		denials = append(denials, FixtureDenial{trial.reason, trial.target})
+	}
 	board, err = loadFixtureBoard(ctx, store.Durable)
 	if err != nil {
 		return FixturePOCReport{}, err
@@ -238,7 +254,7 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 	if err != nil {
 		return FixturePOCReport{}, err
 	}
-	return FixturePOCReport{Decision: decision, Grant: grant, Readback: readback, Before: origin.Tasks, After: after, Denials: []string{"competing_target_denied", "revoked_grant_denied"}}, nil
+	return FixturePOCReport{Decision: decision, Grant: grant, Readback: readback, Before: origin.Tasks, After: after, Denials: denials}, nil
 }
 
 func fixtureActionCall(ctx context.Context, p *Plugin, observation governor.Observation) (governor.Result, error) {
