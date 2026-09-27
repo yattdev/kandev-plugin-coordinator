@@ -110,17 +110,17 @@ func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureB
 	b.mutations = 1
 	return b, nil
 }
-func (b *fixtureBoard) Read() []governor.Task {
+func (b *fixtureBoard) Read(ctx context.Context) ([]governor.Task, error) {
 	if b.reader != nil {
 		rows, _, err := b.reader.List(context.Background(), pluginsdk.TaskFilter{}, pluginsdk.Page{})
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		out := make([]governor.Task, 0, len(rows))
 		for _, row := range rows {
 			task, ok := b.tasks[row.ID]
 			if !ok {
-				continue
+				return nil, fmt.Errorf("fixture POC: unknown listed task %q", row.ID)
 			}
 			task.State = row.State
 			if deps, ok := row.Metadata["dependencies"].([]string); ok {
@@ -129,14 +129,14 @@ func (b *fixtureBoard) Read() []governor.Task {
 			out = append(out, task)
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-		return out
+		return out, nil
 	}
 	out := make([]governor.Task, 0, len(b.tasks))
 	for _, t := range b.tasks {
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
+	return out, nil
 }
 func (b *fixtureBoard) Apply(target, action string) error {
 	if action != fixtureAction {
@@ -186,7 +186,11 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 	p.SetShadowObserver(ShadowStoreObserver{Store: &store})
 	board := newFixtureBoard()
 	origin := fixtureObservation("fixture-origin", "fixture-evidence-origin", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
-	origin.Tasks = board.Read()
+	tasks, err := board.Read(ctx)
+	origin.Tasks = tasks
+	if err != nil {
+		return FixturePOCReport{}, err
+	}
 	decision, err := fixtureActionCall(ctx, p, origin)
 	if err != nil {
 		return FixturePOCReport{}, err
@@ -274,7 +278,11 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 		return FixtureReadback{}, err
 	}
 	effect := fixtureObservation("fixture-effect", "fixture-evidence-effect", origin.ObservedAt.Add(time.Minute), "Ready")
-	effect.Tasks = board.Read()
+	tasks, readErr := board.Read(ctx)
+	effect.Tasks = tasks
+	if readErr != nil {
+		return FixtureReadback{}, readErr
+	}
 	if _, err := fixtureActionCall(ctx, p, effect); err != nil {
 		return FixtureReadback{}, err
 	}
