@@ -107,12 +107,16 @@ func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureB
 	t.State = state
 	t.BlockerReason = ""
 	b.tasks[target] = t
+	stateCopy := state
+	if _, err := b.reader.Update(ctx, pluginsdk.UpdateTaskInput{ID: target, State: &stateCopy}); err != nil {
+		return nil, err
+	}
 	b.mutations = 1
 	return b, nil
 }
 func (b *fixtureBoard) Read(ctx context.Context) ([]governor.Task, error) {
 	if b.reader != nil {
-		rows, _, err := b.reader.List(context.Background(), pluginsdk.TaskFilter{}, pluginsdk.Page{})
+		rows, _, err := b.reader.List(ctx, pluginsdk.TaskFilter{}, pluginsdk.Page{})
 		if err != nil {
 			return nil, err
 		}
