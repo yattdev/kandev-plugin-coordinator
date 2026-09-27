@@ -60,3 +60,32 @@ func TestFixtureGrantReplayHasNoDuplicateEffect(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, replay.Replay)
 }
+
+func TestFixtureGrantReplaySurvivesStoreReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "restart.db")
+	d, err := durablestate.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Migrate(ctx))
+	store := governor.Store{Durable: d, Now: func() time.Time { return time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC) }}
+	p := New()
+	p.SetShadowObserver(ShadowStoreObserver{Store: &store})
+	origin := fixtureObservation("origin", "evidence", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
+	_, err = fixtureActionCall(ctx, p, origin)
+	require.NoError(t, err)
+	board := newFixtureBoard()
+	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}
+	_, err = applyFixtureGrant(ctx, p, store, board, &grant, origin, "op", "blocked-target", fixtureAction)
+	require.NoError(t, err)
+	require.Equal(t, 1, board.mutations)
+	require.NoError(t, d.Close())
+	d, err = durablestate.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Migrate(ctx))
+	defer d.Close()
+	store.Durable = d
+	replay, err := applyFixtureGrant(ctx, New(), store, board, &FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}, origin, "op", "blocked-target", fixtureAction)
+	require.NoError(t, err)
+	require.True(t, replay.Replay)
+	require.Equal(t, 1, board.mutations)
+}
