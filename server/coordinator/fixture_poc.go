@@ -188,13 +188,18 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 		savedTarget, tok := prior.Body["target"].(string)
 		savedAction, aok := prior.Body["action"].(string)
 		savedGrant, gok := prior.Body["grant"].(string)
-		if !sok || !rok || !tok || !aok || !gok || savedTarget != target || savedAction != action || savedGrant != grant.ID {
+		verified, vok := prior.Body["verified"].(bool)
+		if !sok || !rok || !tok || !aok || !gok || !vok || !verified || savedTarget != target || savedAction != action || savedGrant != grant.ID {
 			return FixtureReadback{}, ErrFixtureGrantDenied
 		}
 		return FixtureReadback{OperationID: operationID, TaskID: target, State: state, Receipt: receipt, Replay: true}, nil
 	}
 	grant.Used = true
 	if err := board.Apply(target, action); err != nil {
+		return FixtureReadback{}, err
+	}
+	projection := map[string]any{"state": "Ready", "receipt": "fixture-evidence-effect", "target": target, "action": action, "grant": grant.ID, "operation": operationID, "verified": false}
+	if _, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, projection, durablestate.StorageInline); err != nil {
 		return FixtureReadback{}, err
 	}
 	recovery := governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grant.ID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}
@@ -211,7 +216,8 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 		return FixtureReadback{}, err
 	}
 	readback := FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: receipt.EvidenceID}
-	_, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, map[string]any{"state": readback.State, "receipt": readback.Receipt, "target": target, "action": action, "grant": grant.ID, "operation": operationID}, durablestate.StorageInline)
+	projection["verified"] = true
+	_, err := store.Durable.AppendUpdate(ctx, origin.WorkspaceID, 0, operationID, projection, durablestate.StorageInline)
 	if err != nil {
 		return FixtureReadback{}, err
 	}
