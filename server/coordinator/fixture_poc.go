@@ -39,6 +39,7 @@ type FixtureDenial struct {
 
 type FixtureGrant struct {
 	ID, TargetID, Action string
+	EvidenceID           string
 	Revoked, Used        bool
 }
 
@@ -229,7 +230,7 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 	if err != nil {
 		return FixturePOCReport{}, err
 	}
-	grant := FixtureGrant{ID: "fixture-grant-1", TargetID: target, Action: fixtureAction}
+	grant := FixtureGrant{ID: "fixture-grant-1", TargetID: target, Action: fixtureAction, EvidenceID: origin.EvidenceID}
 	denials := []FixtureDenial{}
 	for _, trial := range []struct {
 		reason, target string
@@ -242,6 +243,13 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 		}
 		denials = append(denials, FixtureDenial{trial.reason, trial.target})
 	}
+	stale := grant
+	staleOrigin := origin
+	staleOrigin.EvidenceID = "stale-evidence"
+	if _, err := applyFixtureGrant(ctx, p, store, board, &stale, staleOrigin, "denied-stale", target, fixtureAction); !errors.Is(err, ErrFixtureGrantDenied) {
+		return FixturePOCReport{}, fmt.Errorf("fixture POC: expected stale evidence denial")
+	}
+	denials = append(denials, FixtureDenial{"stale_evidence", target})
 	board, err = loadFixtureBoard(ctx, store.Durable)
 	if err != nil {
 		return FixturePOCReport{}, err
@@ -294,7 +302,7 @@ func fixtureTarget(result governor.Result) (string, error) {
 }
 
 func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, grant *FixtureGrant, origin governor.Observation, operationID, target, action string) (FixtureReadback, error) {
-	if grant == nil || grant.Revoked || grant.TargetID != target || grant.Action != action {
+	if grant == nil || grant.Revoked || grant.TargetID != target || grant.Action != action || grant.EvidenceID != origin.EvidenceID {
 		return FixtureReadback{}, ErrFixtureGrantDenied
 	}
 	if prior, found, err := store.Durable.GetRecord(ctx, origin.WorkspaceID, operationID); err != nil {

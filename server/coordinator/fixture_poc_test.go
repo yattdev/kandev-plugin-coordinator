@@ -36,7 +36,7 @@ func TestFixtureGrantDeniesCompetingTargetAndRevocation(t *testing.T) {
 	origin := fixtureObservation("origin", "evidence", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
 	_, err := fixtureActionCall(context.Background(), p, origin)
 	require.NoError(t, err)
-	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}
+	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction, EvidenceID: origin.EvidenceID}
 	board := newFixtureBoard()
 	_, err = applyFixtureGrant(context.Background(), p, store, board, &grant, origin, "op", "competing-task", fixtureAction)
 	require.ErrorIs(t, err, ErrFixtureGrantDenied)
@@ -52,7 +52,7 @@ func TestFixtureGrantReplayHasNoDuplicateEffect(t *testing.T) {
 	origin := fixtureObservation("origin", "evidence", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
 	_, err := fixtureActionCall(context.Background(), p, origin)
 	require.NoError(t, err)
-	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}
+	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction, EvidenceID: origin.EvidenceID}
 	board := newFixtureBoard()
 	_, err = applyFixtureGrant(context.Background(), p, store, board, &grant, origin, "op", "blocked-target", fixtureAction)
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestFixtureGrantReplaySurvivesStoreReopen(t *testing.T) {
 	_, err = fixtureActionCall(ctx, p, origin)
 	require.NoError(t, err)
 	board := newFixtureBoard()
-	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}
+	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction, EvidenceID: origin.EvidenceID}
 	_, err = applyFixtureGrant(ctx, p, store, board, &grant, origin, "op", "blocked-target", fixtureAction)
 	require.NoError(t, err)
 	require.Equal(t, 1, board.mutations)
@@ -90,7 +90,7 @@ func TestFixtureGrantReplaySurvivesStoreReopen(t *testing.T) {
 	board, err = loadFixtureBoard(ctx, d)
 	require.NoError(t, err)
 	require.Equal(t, "Ready", board.tasks["blocked-target"].State)
-	replay, err := applyFixtureGrant(ctx, New(), store, board, &FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}, origin, "op", "blocked-target", fixtureAction)
+	replay, err := applyFixtureGrant(ctx, New(), store, board, &FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction, EvidenceID: origin.EvidenceID}, origin, "op", "blocked-target", fixtureAction)
 	require.NoError(t, err)
 	require.True(t, replay.Replay)
 	require.Equal(t, 1, board.mutations)
