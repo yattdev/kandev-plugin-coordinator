@@ -112,7 +112,19 @@ func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureB
 }
 func (b *fixtureBoard) Read() []governor.Task {
 	if b.reader != nil {
-		_, _, _ = b.reader.List(context.Background(), pluginsdk.TaskFilter{}, pluginsdk.Page{})
+		rows, _, err := b.reader.List(context.Background(), pluginsdk.TaskFilter{}, pluginsdk.Page{})
+		if err != nil {
+			return nil
+		}
+		for _, row := range rows {
+			if task, ok := b.tasks[row.ID]; ok {
+				task.State = row.State
+				if deps, ok := row.Metadata["dependencies"].([]string); ok {
+					task.Dependencies = deps
+				}
+				b.tasks[row.ID] = task
+			}
+		}
 	}
 	out := make([]governor.Task, 0, len(b.tasks))
 	for _, t := range b.tasks {
@@ -167,7 +179,9 @@ func RunFixturePOC(ctx context.Context) (FixturePOCReport, error) {
 func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport, error) {
 	p := New()
 	p.SetShadowObserver(ShadowStoreObserver{Store: &store})
+	board := newFixtureBoard()
 	origin := fixtureObservation("fixture-origin", "fixture-evidence-origin", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
+	origin.Tasks = board.Read()
 	decision, err := fixtureActionCall(ctx, p, origin)
 	if err != nil {
 		return FixturePOCReport{}, err
@@ -177,7 +191,7 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 		return FixturePOCReport{}, err
 	}
 	grant := FixtureGrant{ID: "fixture-grant-1", TargetID: target, Action: fixtureAction}
-	board, err := loadFixtureBoard(ctx, store.Durable)
+	board, err = loadFixtureBoard(ctx, store.Durable)
 	if err != nil {
 		return FixturePOCReport{}, err
 	}
