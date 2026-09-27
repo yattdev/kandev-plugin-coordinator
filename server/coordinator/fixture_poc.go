@@ -54,12 +54,19 @@ var _ pluginsdk.TaskReader = (*fixtureTaskReader)(nil)
 func newFixtureTaskReader() *fixtureTaskReader {
 	return &fixtureTaskReader{rows: map[string]pluginsdk.Task{"done-dependency": {ID: "done-dependency", WorkspaceID: "fixture-workspace", State: "Done"}, "blocked-target": {ID: "blocked-target", WorkspaceID: "fixture-workspace", State: "Blocked", Metadata: map[string]any{"dependencies": []string{"done-dependency"}}}, "in-progress": {ID: "in-progress", WorkspaceID: "fixture-workspace", State: "InProgress"}}}
 }
-func (r *fixtureTaskReader) List(_ context.Context, _ pluginsdk.TaskFilter, _ pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
+func (r *fixtureTaskReader) List(_ context.Context, _ pluginsdk.TaskFilter, page pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
 	out := make([]pluginsdk.Task, 0, len(r.rows))
 	for _, t := range r.rows {
 		out = append(out, t)
 	}
-	return out, &pluginsdk.PageInfo{}, nil
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if page.Cursor == "" && len(out) > 1 {
+		return out[:1], &pluginsdk.PageInfo{HasMore: true, NextCursor: "1"}, nil
+	}
+	if page.Cursor == "1" {
+		return out[1:], &pluginsdk.PageInfo{}, nil
+	}
+	return nil, nil, ErrFixtureGrantDenied
 }
 func (r *fixtureTaskReader) Get(_ context.Context, id string) (*pluginsdk.Task, error) {
 	t, ok := r.rows[id]
@@ -116,9 +123,21 @@ func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureB
 }
 func (b *fixtureBoard) Read(ctx context.Context) ([]governor.Task, error) {
 	if b.reader != nil {
-		rows, _, err := b.reader.List(ctx, pluginsdk.TaskFilter{}, pluginsdk.Page{})
-		if err != nil {
-			return nil, err
+		var rows []pluginsdk.Task
+		cursor := ""
+		for {
+			pageRows, info, err := b.reader.List(ctx, pluginsdk.TaskFilter{}, pluginsdk.Page{Cursor: cursor})
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, pageRows...)
+			if info == nil || !info.HasMore {
+				break
+			}
+			if info.NextCursor == "" || info.NextCursor == cursor {
+				return nil, ErrFixtureGrantDenied
+			}
+			cursor = info.NextCursor
 		}
 		out := make([]governor.Task, 0, len(rows))
 		for _, row := range rows {
