@@ -55,7 +55,7 @@ func newFixtureBoard() *fixtureBoard {
 }
 func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureBoard, error) {
 	b := newFixtureBoard()
-	rec, found, err := store.GetRecord(ctx, "fixture-workspace", "fixture-board")
+	rec, found, err := store.GetRecord(ctx, "fixture-workspace", "fixture-operation-1")
 	if err != nil || !found {
 		return b, err
 	}
@@ -197,9 +197,6 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 	if err := board.Apply(target, action); err != nil {
 		return FixtureReadback{}, err
 	}
-	if _, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, "fixture-board", durablestate.KindDirtyTask, map[string]any{"target": target, "state": "Ready"}, durablestate.StorageInline); err != nil {
-		return FixtureReadback{}, err
-	}
 	recovery := governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grant.ID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}
 	if err := store.RecordSolRecovery(ctx, 0, origin.WorkspaceID, recovery); err != nil {
 		return FixtureReadback{}, err
@@ -214,7 +211,7 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 		return FixtureReadback{}, err
 	}
 	readback := FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: receipt.EvidenceID}
-	_, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, map[string]any{"state": readback.State, "receipt": readback.Receipt, "target": target, "action": action, "grant": grant.ID}, durablestate.StorageInline)
+	_, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, map[string]any{"state": readback.State, "receipt": readback.Receipt, "target": target, "action": action, "grant": grant.ID, "operation": operationID}, durablestate.StorageInline)
 	if err != nil {
 		return FixtureReadback{}, err
 	}
