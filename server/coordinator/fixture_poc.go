@@ -116,15 +116,20 @@ func (b *fixtureBoard) Read() []governor.Task {
 		if err != nil {
 			return nil
 		}
+		out := make([]governor.Task, 0, len(rows))
 		for _, row := range rows {
-			if task, ok := b.tasks[row.ID]; ok {
-				task.State = row.State
-				if deps, ok := row.Metadata["dependencies"].([]string); ok {
-					task.Dependencies = deps
-				}
-				b.tasks[row.ID] = task
+			task, ok := b.tasks[row.ID]
+			if !ok {
+				continue
 			}
+			task.State = row.State
+			if deps, ok := row.Metadata["dependencies"].([]string); ok {
+				task.Dependencies = deps
+			}
+			out = append(out, task)
 		}
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+		return out
 	}
 	out := make([]governor.Task, 0, len(b.tasks))
 	for _, t := range b.tasks {
