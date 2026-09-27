@@ -106,6 +106,33 @@ func TestFixtureGrantDeniesSupersededOriginBeforeIntentOrMutation(t *testing.T) 
 	require.False(t, found)
 }
 
+func TestFixtureGrantDeniesSupersessionInjectedBeforeIntent(t *testing.T) {
+	ctx := context.Background()
+	store := fixtureStore(t)
+	p := New()
+	p.SetShadowObserver(ShadowStoreObserver{Store: &store})
+	origin := fixtureObservation("origin", "shared-evidence", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
+	_, err := fixtureActionCall(ctx, p, origin)
+	require.NoError(t, err)
+	board := fixtureTestBoard(t, store.Durable)
+	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction, EvidenceID: origin.EvidenceID}
+	_, err = applyFixtureGrantWithHooks(ctx, p, store, board, &grant, origin, "racing-op", "blocked-target", fixtureAction, fixtureApplyHooks{BeforeOperationRecord: func() error {
+		superseding := origin
+		superseding.EventID = "origin-raced"
+		superseding.ObservedAt = origin.ObservedAt.Add(time.Minute)
+		_, observeErr := fixtureActionCall(ctx, p, superseding)
+		return observeErr
+	}})
+	require.ErrorIs(t, err, ErrFixtureGrantDenied)
+	require.Equal(t, 0, board.mutations)
+	task, err := board.taskReader.Get(ctx, "blocked-target")
+	require.NoError(t, err)
+	require.Equal(t, "Blocked", task.State)
+	_, found, err := store.Durable.GetRecord(ctx, origin.WorkspaceID, "racing-op")
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
 func TestFixtureBoardUsesHostTasksBoundary(t *testing.T) {
 	board := fixtureTestBoard(t, nil)
 	require.Same(t, board.taskReader, board.host.Tasks())

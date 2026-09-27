@@ -455,10 +455,21 @@ func applyFixtureGrantWithHooks(ctx context.Context, p *Plugin, store governor.S
 				return FixtureReadback{}, err
 			}
 		}
+		// Commit the governor's immutable acceptance before creating fixture
+		// intent. This closes the validate-to-intent gap: a superseding
+		// observation is rejected without a board operation record or effect.
+		if err := recordFixtureRecovery(ctx, store, origin, operationID, target, action, grant.ID); err != nil {
+			return FixtureReadback{}, fmt.Errorf("%w: %v", ErrFixtureGrantDenied, err)
+		}
 		projection := map[string]any{"phase": "pending", "target": target, "action": action, "grant": grant.ID, "evidence": origin.EvidenceID, "operation": operationID, "verified": false}
 		if _, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, projection, durablestate.StorageInline); err != nil {
 			return FixtureReadback{}, err
 		}
+	}
+	// A pending projection can be recovered after interruption. Its accepted
+	// governor receipt is the durable authorization for the one fixture update.
+	if err := recordFixtureRecovery(ctx, store, origin, operationID, target, action, grant.ID); err != nil {
+		return FixtureReadback{}, fmt.Errorf("%w: %v", ErrFixtureGrantDenied, err)
 	}
 	grant.Used = true
 	if err := board.Apply(target, action); err != nil {
@@ -486,8 +497,8 @@ func fixtureBoardState(ctx context.Context, board *fixtureBoard, target string) 
 }
 
 func finishFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, origin governor.Observation, operationID, target, action, grantID string, replay bool, hooks fixtureApplyHooks) (FixtureReadback, error) {
-	recovery := governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grantID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}
-	if err := store.RecordSolRecovery(ctx, 0, origin.WorkspaceID, recovery); err != nil {
+	recovery := fixtureRecovery(origin, operationID, target, action, grantID)
+	if err := recordFixtureRecovery(ctx, store, origin, operationID, target, action, grantID); err != nil {
 		return FixtureReadback{}, err
 	}
 	effect := fixtureObservation("fixture-effect", "fixture-evidence-effect", origin.ObservedAt.Add(time.Minute), "Ready")
@@ -515,6 +526,14 @@ func finishFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, bo
 		return FixtureReadback{}, err
 	}
 	return readback, nil
+}
+
+func fixtureRecovery(origin governor.Observation, operationID, target, action, grantID string) governor.SolRecovery {
+	return governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grantID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}
+}
+
+func recordFixtureRecovery(ctx context.Context, store governor.Store, origin governor.Observation, operationID, target, action, grantID string) error {
+	return store.RecordSolRecovery(ctx, 0, origin.WorkspaceID, fixtureRecovery(origin, operationID, target, action, grantID))
 }
 
 func fixtureObservation(event, evidence string, observed time.Time, targetState string) governor.Observation {
