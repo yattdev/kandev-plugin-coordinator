@@ -25,22 +25,27 @@ var ErrFixtureGrantDenied = errors.New("fixture POC: grant denied")
 var ErrFixtureOutcomeUnknown = errors.New("fixture POC: operation outcome unknown")
 
 type FixturePOCReport struct {
-	Decision governor.Result `json:"decision"`
-	Grant    FixtureGrant    `json:"grant"`
-	Readback FixtureReadback `json:"readback"`
-	Before   []governor.Task `json:"before"`
-	After    []governor.Task `json:"after"`
-	Denials  []FixtureDenial `json:"denials"`
+	Decision       governor.Result `json:"decision"`
+	SelectedAction string          `json:"selected_action"`
+	Grant          FixtureGrant    `json:"grant"`
+	Readback       FixtureReadback `json:"readback"`
+	Before         []governor.Task `json:"before"`
+	After          []governor.Task `json:"after"`
+	Denials        []FixtureDenial `json:"denials"`
 }
 type FixtureDenial struct {
 	Reason   string `json:"reason"`
 	TargetID string `json:"target_id"`
+	Action   string `json:"action"`
 }
 
 type FixtureGrant struct {
-	ID, TargetID, Action string
-	EvidenceID           string
-	Revoked, Used        bool
+	ID         string `json:"id"`
+	TargetID   string `json:"target_id"`
+	Action     string `json:"action"`
+	EvidenceID string `json:"evidence_id"`
+	Revoked    bool   `json:"revoked"`
+	Used       bool   `json:"used"`
 }
 
 type FixtureReadback struct {
@@ -51,20 +56,79 @@ type FixtureReadback struct {
 	Replay      bool   `json:"replay"`
 }
 type fixtureBoard struct {
-	tasks     map[string]governor.Task
-	mutations int
-	reader    *fixtureTaskReader
+	tasks      map[string]governor.Task
+	mutations  int
+	host       *fixtureHost
+	reader     pluginsdk.TaskReader
+	taskReader *fixtureTaskReader
 }
 type fixtureTaskReader struct {
 	rows      map[string]pluginsdk.Task
 	listErr   error
 	badCursor bool
+	durable   *durablestate.Store
 }
 
 var _ pluginsdk.TaskReader = (*fixtureTaskReader)(nil)
 
-func newFixtureTaskReader() *fixtureTaskReader {
-	return &fixtureTaskReader{rows: map[string]pluginsdk.Task{"done-dependency": {ID: "done-dependency", WorkspaceID: "fixture-workspace", State: "Done"}, "blocked-target": {ID: "blocked-target", WorkspaceID: "fixture-workspace", State: "Blocked", Metadata: map[string]any{"dependencies": []string{"done-dependency"}}}, "in-progress": {ID: "in-progress", WorkspaceID: "fixture-workspace", State: "InProgress"}}}
+// fixtureHost is a local typed Host double. The POC reaches the task adapter
+// only through Host.Tasks(), exercising the SDK accessor boundary without a
+// broker, Host process, or live board.
+type fixtureHost struct {
+	pluginsdk.UnimplementedHostData
+	tasks pluginsdk.TaskReader
+}
+
+func (h *fixtureHost) GetState(context.Context, string, string, string) (map[string]any, bool, error) {
+	return nil, false, nil
+}
+func (h *fixtureHost) SetState(context.Context, string, string, string, map[string]any) error {
+	return nil
+}
+func (h *fixtureHost) DeleteState(context.Context, string, string, string) error { return nil }
+func (h *fixtureHost) ListState(context.Context, string, string) ([]pluginsdk.StateEntry, error) {
+	return nil, nil
+}
+func (h *fixtureHost) GetConfig(context.Context) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+func (h *fixtureHost) RevealSecret(context.Context, string) (string, error) {
+	return "", ErrFixtureGrantDenied
+}
+func (h *fixtureHost) GetSecret(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+func (h *fixtureHost) SetSecret(context.Context, string, string) error { return ErrFixtureGrantDenied }
+func (h *fixtureHost) DeleteSecret(context.Context, string) error      { return ErrFixtureGrantDenied }
+func (h *fixtureHost) EmitEvent(context.Context, string, map[string]any) error {
+	return ErrFixtureGrantDenied
+}
+func (h *fixtureHost) Tasks() pluginsdk.TaskReader { return h.tasks }
+
+var _ pluginsdk.Host = (*fixtureHost)(nil)
+
+func newFixtureTaskReader(ctx context.Context, durable *durablestate.Store) (*fixtureTaskReader, error) {
+	r := &fixtureTaskReader{durable: durable, rows: map[string]pluginsdk.Task{"done-dependency": {ID: "done-dependency", WorkspaceID: "fixture-workspace", State: "Done"}, "blocked-target": {ID: "blocked-target", WorkspaceID: "fixture-workspace", State: "Blocked", Metadata: map[string]any{"dependencies": []string{"done-dependency"}}}, "in-progress": {ID: "in-progress", WorkspaceID: "fixture-workspace", State: "InProgress"}}}
+	if durable == nil {
+		return r, nil
+	}
+	for id, task := range r.rows {
+		record, found, err := durable.GetRecord(ctx, "fixture-workspace", fixtureBoardRecordID(id))
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		recordedID, idOK := record.Body["task_id"].(string)
+		state, stateOK := record.Body["state"].(string)
+		if !idOK || !stateOK || recordedID != id || (state != task.State && state != "Ready") {
+			return nil, ErrFixtureOutcomeUnknown
+		}
+		task.State = state
+		r.rows[id] = task
+	}
+	return r, nil
 }
 func (r *fixtureTaskReader) List(_ context.Context, _ pluginsdk.TaskFilter, page pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
 	if r.listErr != nil {
@@ -96,47 +160,59 @@ func (r *fixtureTaskReader) Get(_ context.Context, id string) (*pluginsdk.Task, 
 func (r *fixtureTaskReader) Create(context.Context, pluginsdk.CreateTaskInput) (*pluginsdk.Task, error) {
 	return nil, ErrFixtureGrantDenied
 }
-func (r *fixtureTaskReader) Update(_ context.Context, in pluginsdk.UpdateTaskInput) (*pluginsdk.Task, error) {
+func (r *fixtureTaskReader) Update(ctx context.Context, in pluginsdk.UpdateTaskInput) (*pluginsdk.Task, error) {
 	t, ok := r.rows[in.ID]
 	if !ok || in.State == nil {
 		return nil, ErrFixtureGrantDenied
+	}
+	if r.durable != nil {
+		body := map[string]any{"task_id": in.ID, "state": *in.State}
+		_, found, err := r.durable.GetRecord(ctx, "fixture-workspace", fixtureBoardRecordID(in.ID))
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			_, err = r.durable.AppendUpdate(ctx, "fixture-workspace", 0, fixtureBoardRecordID(in.ID), body, durablestate.StorageInline)
+		} else {
+			_, err = r.durable.AppendAdd(ctx, "fixture-workspace", 0, fixtureBoardRecordID(in.ID), durablestate.KindDirtyTask, body, durablestate.StorageInline)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	t.State = *in.State
 	r.rows[in.ID] = t
 	return &t, nil
 }
 
-func newFixtureBoard() *fixtureBoard {
-	b := &fixtureBoard{tasks: map[string]governor.Task{}, reader: newFixtureTaskReader()}
+func fixtureBoardRecordID(taskID string) string { return "fixture-board/" + taskID }
+
+func newFixtureBoard(ctx context.Context, durable *durablestate.Store) (*fixtureBoard, error) {
+	reader, err := newFixtureTaskReader(ctx, durable)
+	if err != nil {
+		return nil, err
+	}
+	host := &fixtureHost{tasks: reader}
+	b := &fixtureBoard{tasks: map[string]governor.Task{}, host: host, reader: host.Tasks(), taskReader: reader}
 	for _, t := range fixtureObservation("x", "x", time.Now(), "Blocked").Tasks {
 		b.tasks[t.ID] = t
 	}
-	return b
+	return b, nil
 }
 func loadFixtureBoard(ctx context.Context, store *durablestate.Store, operationID string) (*fixtureBoard, error) {
-	b := newFixtureBoard()
+	b, err := newFixtureBoard(ctx, store)
+	if err != nil {
+		return nil, err
+	}
 	rec, found, err := store.GetRecord(ctx, "fixture-workspace", operationID)
 	if err != nil || !found {
 		return b, err
 	}
-	target, ok := rec.Body["target"].(string)
-	state, sok := rec.Body["state"].(string)
 	verified, vok := rec.Body["verified"].(bool)
-	if !vok || !verified {
+	phase, pok := rec.Body["phase"].(string)
+	if !vok || (!verified && (!pok || phase != "pending")) {
 		return nil, ErrFixtureOutcomeUnknown
 	}
-	if !ok || !sok || target != "blocked-target" || state != "Ready" {
-		return nil, ErrFixtureGrantDenied
-	}
-	t := b.tasks[target]
-	t.State = state
-	t.BlockerReason = ""
-	b.tasks[target] = t
-	stateCopy := state
-	if _, err := b.reader.Update(ctx, pluginsdk.UpdateTaskInput{ID: target, State: &stateCopy}); err != nil {
-		return nil, err
-	}
-	b.mutations = 1
 	return b, nil
 }
 func (b *fixtureBoard) Read(ctx context.Context) ([]governor.Task, error) {
@@ -225,7 +301,10 @@ func RunFixturePOC(ctx context.Context) (FixturePOCReport, error) {
 func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport, error) {
 	p := New()
 	p.SetShadowObserver(ShadowStoreObserver{Store: &store})
-	board := newFixtureBoard()
+	board, err := newFixtureBoard(ctx, store.Durable)
+	if err != nil {
+		return FixturePOCReport{}, err
+	}
 	origin := fixtureObservation("fixture-origin", "fixture-evidence-origin", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
 	tasks, err := board.Read(ctx)
 	origin.Tasks = tasks
@@ -243,15 +322,15 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 	grant := FixtureGrant{ID: "fixture-grant-1", TargetID: target, Action: fixtureAction, EvidenceID: origin.EvidenceID}
 	denials := []FixtureDenial{}
 	for _, trial := range []struct {
-		reason, target string
-		revoked        bool
-	}{{"competing_target", "in-progress", false}, {"revoked_grant", target, true}} {
+		reason, target, action string
+		revoked                bool
+	}{{"competing_target", "in-progress", fixtureAction, false}, {"revoked_grant", target, fixtureAction, true}, {"non_exact_action", target, "fixture.other", false}} {
 		g := grant
 		g.Revoked = trial.revoked
-		if _, err := applyFixtureGrant(ctx, p, store, board, &g, origin, "denied-"+trial.reason, trial.target, fixtureAction); !errors.Is(err, ErrFixtureGrantDenied) {
+		if _, err := applyFixtureGrant(ctx, p, store, board, &g, origin, "denied-"+trial.reason, trial.target, trial.action); !errors.Is(err, ErrFixtureGrantDenied) {
 			return FixturePOCReport{}, fmt.Errorf("fixture POC: expected denial")
 		}
-		denials = append(denials, FixtureDenial{trial.reason, trial.target})
+		denials = append(denials, FixtureDenial{Reason: trial.reason, TargetID: trial.target, Action: trial.action})
 	}
 	stale := grant
 	staleOrigin := origin
@@ -259,7 +338,7 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 	if _, err := applyFixtureGrant(ctx, p, store, board, &stale, staleOrigin, "denied-stale", target, fixtureAction); !errors.Is(err, ErrFixtureGrantDenied) {
 		return FixturePOCReport{}, fmt.Errorf("fixture POC: expected stale evidence denial")
 	}
-	denials = append(denials, FixtureDenial{"stale_evidence", target})
+	denials = append(denials, FixtureDenial{Reason: "stale_evidence", TargetID: target, Action: fixtureAction})
 	board, err = loadFixtureBoard(ctx, store.Durable, "fixture-operation-1")
 	if err != nil {
 		return FixturePOCReport{}, err
@@ -272,7 +351,7 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 	if err != nil {
 		return FixturePOCReport{}, err
 	}
-	return FixturePOCReport{Decision: decision, Grant: grant, Readback: readback, Before: origin.Tasks, After: after, Denials: denials}, nil
+	return FixturePOCReport{Decision: decision, SelectedAction: fixtureAction, Grant: grant, Readback: readback, Before: origin.Tasks, After: after, Denials: denials}, nil
 }
 
 func fixtureActionCall(ctx context.Context, p *Plugin, observation governor.Observation) (governor.Result, error) {
@@ -311,36 +390,94 @@ func fixtureTarget(result governor.Result) (string, error) {
 	return targets[0], nil
 }
 
+type fixtureApplyHooks struct {
+	BeforeOperationRecord func() error
+	AfterEffect           func() error
+}
+
 func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, grant *FixtureGrant, origin governor.Observation, operationID, target, action string) (FixtureReadback, error) {
+	return applyFixtureGrantWithHooks(ctx, p, store, board, grant, origin, operationID, target, action, fixtureApplyHooks{})
+}
+
+func applyFixtureGrantWithHooks(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, grant *FixtureGrant, origin governor.Observation, operationID, target, action string, hooks fixtureApplyHooks) (FixtureReadback, error) {
 	if grant == nil || grant.Revoked || grant.TargetID != target || grant.Action != action || grant.EvidenceID != origin.EvidenceID {
 		return FixtureReadback{}, ErrFixtureGrantDenied
 	}
 	if prior, found, err := store.Durable.GetRecord(ctx, origin.WorkspaceID, operationID); err != nil {
 		return FixtureReadback{}, err
 	} else if found {
-		state, sok := prior.Body["state"].(string)
-		receipt, rok := prior.Body["receipt"].(string)
 		savedTarget, tok := prior.Body["target"].(string)
 		savedAction, aok := prior.Body["action"].(string)
 		savedGrant, gok := prior.Body["grant"].(string)
+		savedEvidence, eok := prior.Body["evidence"].(string)
 		verified, vok := prior.Body["verified"].(bool)
-		if !vok || !verified {
-			return FixtureReadback{}, ErrFixtureOutcomeUnknown
-		}
-		if !sok || !rok || !tok || !aok || !gok || savedTarget != target || savedAction != action || savedGrant != grant.ID {
+		phase, pok := prior.Body["phase"].(string)
+		if !tok || !aok || !gok || !eok || !vok || !pok || savedTarget != target || savedAction != action || savedGrant != grant.ID || savedEvidence != origin.EvidenceID {
 			return FixtureReadback{}, ErrFixtureGrantDenied
 		}
-		return FixtureReadback{OperationID: operationID, TaskID: target, State: state, Receipt: receipt, Replay: true}, nil
+		if verified {
+			state, sok := prior.Body["state"].(string)
+			receipt, rok := prior.Body["receipt"].(string)
+			if !sok || !rok {
+				return FixtureReadback{}, ErrFixtureOutcomeUnknown
+			}
+			ready, err := fixtureBoardState(ctx, board, target)
+			if err != nil {
+				return FixtureReadback{}, err
+			}
+			if !ready {
+				return FixtureReadback{}, ErrFixtureOutcomeUnknown
+			}
+			return FixtureReadback{OperationID: operationID, TaskID: target, State: state, Receipt: receipt, Replay: true}, nil
+		}
+		if phase != "pending" {
+			return FixtureReadback{}, ErrFixtureOutcomeUnknown
+		}
+		ready, err := fixtureBoardState(ctx, board, target)
+		if err != nil {
+			return FixtureReadback{}, err
+		}
+		if ready {
+			return finishFixtureGrant(ctx, p, store, board, origin, operationID, target, action, grant.ID, true)
+		}
+	} else {
+		if hooks.BeforeOperationRecord != nil {
+			if err := hooks.BeforeOperationRecord(); err != nil {
+				return FixtureReadback{}, err
+			}
+		}
+		projection := map[string]any{"phase": "pending", "target": target, "action": action, "grant": grant.ID, "evidence": origin.EvidenceID, "operation": operationID, "verified": false}
+		if _, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, projection, durablestate.StorageInline); err != nil {
+			return FixtureReadback{}, err
+		}
 	}
 	grant.Used = true
 	if err := board.Apply(target, action); err != nil {
 		return FixtureReadback{}, err
 	}
-	projection := map[string]any{"state": "Ready", "receipt": "fixture-evidence-effect", "target": target, "action": action, "grant": grant.ID, "operation": operationID, "verified": false}
-	if _, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, projection, durablestate.StorageInline); err != nil {
-		return FixtureReadback{}, err
+	if hooks.AfterEffect != nil {
+		if err := hooks.AfterEffect(); err != nil {
+			return FixtureReadback{}, err
+		}
 	}
-	recovery := governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grant.ID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}
+	return finishFixtureGrant(ctx, p, store, board, origin, operationID, target, action, grant.ID, false)
+}
+
+func fixtureBoardState(ctx context.Context, board *fixtureBoard, target string) (bool, error) {
+	tasks, err := board.Read(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, task := range tasks {
+		if task.ID == target {
+			return task.State == "Ready", nil
+		}
+	}
+	return false, ErrFixtureGrantDenied
+}
+
+func finishFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, origin governor.Observation, operationID, target, action, grantID string, replay bool) (FixtureReadback, error) {
+	recovery := governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grantID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}
 	if err := store.RecordSolRecovery(ctx, 0, origin.WorkspaceID, recovery); err != nil {
 		return FixtureReadback{}, err
 	}
@@ -357,8 +494,8 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 	if err := store.VerifySolRecoveryEffectReceipt(ctx, 0, origin.WorkspaceID, receipt); err != nil {
 		return FixtureReadback{}, err
 	}
-	readback := FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: receipt.EvidenceID}
-	projection["verified"] = true
+	readback := FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: receipt.EvidenceID, Replay: replay}
+	projection := map[string]any{"phase": "verified", "state": "Ready", "receipt": receipt.EvidenceID, "target": target, "action": action, "grant": grantID, "evidence": origin.EvidenceID, "operation": operationID, "verified": true}
 	_, err := store.Durable.AppendUpdate(ctx, origin.WorkspaceID, 0, operationID, projection, durablestate.StorageInline)
 	if err != nil {
 		return FixtureReadback{}, err
