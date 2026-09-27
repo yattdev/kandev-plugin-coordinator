@@ -27,6 +27,11 @@ func TestFixturePOCUsesCoordinatorActionAndGovernorReceipt(t *testing.T) {
 	require.Equal(t, "blocked-target", report.Grant.TargetID)
 	require.True(t, report.Grant.Used)
 	require.Equal(t, "Ready", report.Readback.State)
+	require.Len(t, report.Before, 3)
+	require.Len(t, report.After, 3)
+	require.Equal(t, []string{"done-dependency"}, report.Before[0].Dependencies)
+	require.Len(t, report.Denials, 3)
+	require.Equal(t, "stale_evidence", report.Denials[2].Reason)
 }
 
 func TestFixtureGrantDeniesCompetingTargetAndRevocation(t *testing.T) {
