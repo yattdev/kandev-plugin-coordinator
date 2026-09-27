@@ -22,6 +22,7 @@ import (
 const fixtureAction = "fixture.unblock"
 
 var ErrFixtureGrantDenied = errors.New("fixture POC: grant denied")
+var ErrFixtureOutcomeUnknown = errors.New("fixture POC: operation outcome unknown")
 
 type FixturePOCReport struct {
 	Decision governor.Result `json:"decision"`
@@ -61,6 +62,10 @@ func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureB
 	}
 	target, ok := rec.Body["target"].(string)
 	state, sok := rec.Body["state"].(string)
+	verified, vok := rec.Body["verified"].(bool)
+	if !vok || !verified {
+		return nil, ErrFixtureOutcomeUnknown
+	}
 	if !ok || !sok || target != "blocked-target" || state != "Ready" {
 		return nil, ErrFixtureGrantDenied
 	}
