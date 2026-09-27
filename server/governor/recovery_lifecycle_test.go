@@ -516,3 +516,25 @@ func effectReceiptFixture(t *testing.T, ctx context.Context) (Store, Observation
 	require.NoError(t, err)
 	return s, o, RecoveryEffectReceipt{IncidentID: "incident", EventID: o.EventID, EvidenceID: o.EvidenceID, TaskID: "t", Head: "h", PlanVersion: 1, StrategyVersion: 1, Verifier: "verifier", Milestone: "milestone", ObservedAt: o.ObservedAt}
 }
+
+func TestRecoveryEffectReceiptReplayRequiresExactIdentity(t *testing.T) {
+	ctx := context.Background()
+	s, _, receipt := effectReceiptFixture(t, ctx)
+	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", receipt))
+	// A lost response is safe to replay only when every receipt field matches.
+	require.NoError(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", receipt))
+	for _, altered := range []struct {
+		name string
+		edit func(*RecoveryEffectReceipt)
+	}{
+		{"head", func(r *RecoveryEffectReceipt) { r.Head = "other-head" }},
+		{"verifier", func(r *RecoveryEffectReceipt) { r.Verifier = "other-verifier" }},
+		{"milestone", func(r *RecoveryEffectReceipt) { r.Milestone = "other-milestone" }},
+	} {
+		t.Run(altered.name, func(t *testing.T) {
+			candidate := receipt
+			altered.edit(&candidate)
+			require.ErrorIs(t, s.VerifySolRecoveryEffectReceipt(ctx, 0, "w", candidate), ErrStaleContract)
+		})
+	}
+}
