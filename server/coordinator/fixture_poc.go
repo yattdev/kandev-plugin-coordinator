@@ -161,7 +161,15 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 	if prior, found, err := store.Durable.GetRecord(ctx, origin.WorkspaceID, operationID); err != nil {
 		return FixtureReadback{}, err
 	} else if found {
-		return FixtureReadback{OperationID: operationID, TaskID: target, State: prior.Body["state"].(string), Receipt: prior.Body["receipt"].(string), Replay: true}, nil
+		state, sok := prior.Body["state"].(string)
+		receipt, rok := prior.Body["receipt"].(string)
+		savedTarget, tok := prior.Body["target"].(string)
+		savedAction, aok := prior.Body["action"].(string)
+		savedGrant, gok := prior.Body["grant"].(string)
+		if !sok || !rok || !tok || !aok || !gok || savedTarget != target || savedAction != action || savedGrant != grant.ID {
+			return FixtureReadback{}, ErrFixtureGrantDenied
+		}
+		return FixtureReadback{OperationID: operationID, TaskID: target, State: state, Receipt: receipt, Replay: true}, nil
 	}
 	if grant.Used {
 		return FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: "fixture-evidence-effect", Replay: true}, nil
@@ -184,7 +192,7 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 		return FixtureReadback{}, err
 	}
 	readback := FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: receipt.EvidenceID}
-	_, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, map[string]any{"state": readback.State, "receipt": readback.Receipt}, durablestate.StorageInline)
+	_, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, map[string]any{"state": readback.State, "receipt": readback.Receipt, "target": target, "action": action, "grant": grant.ID}, durablestate.StorageInline)
 	if err != nil {
 		return FixtureReadback{}, err
 	}
