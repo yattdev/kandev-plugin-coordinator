@@ -162,6 +162,7 @@ type SolRecovery struct {
 	AffectedTaskIDs                                                                                                       []string
 	ActualModelReceipt                                                                                                    string
 	EffectVerifiedAt                                                                                                      time.Time
+	EffectReceipt                                                                                                         *RecoveryEffectReceipt
 	RecurrenceEventID, RecurrenceEvidenceID, RecurrenceReceiptID                                                          string
 	RecurrenceObservedAt                                                                                                  time.Time
 }
@@ -599,14 +600,14 @@ func (s Store) VerifySolRecoveryEffectReceipt(ctx context.Context, fence int64, 
 		}
 		key := receipt.IncidentID + "/" + fmt.Sprint(receipt.StrategyVersion) + "/" + fmt.Sprint(receipt.PlanVersion)
 		r, ok := st.Recoveries[key]
-		// A projection may lag a committed receipt across interruption. The exact
-		// receipt is a lost-response replay rather than a second effect.
-		if ok && r.Status == "effect_verified" && r.EffectEvidenceID == receipt.EvidenceID && r.EffectVerifiedAt.Equal(receipt.ObservedAt) {
-			for _, id := range r.AffectedTaskIDs {
-				if id == receipt.TaskID {
-					return errNoMutation
-				}
+		// A projection may lag a committed receipt across interruption. Only the
+		// exact receipt is a lost-response replay; matching evidence and time
+		// alone must not allow a changed verifier, milestone, or task identity.
+		if ok && r.Status == "effect_verified" {
+			if r.EffectReceipt != nil && reflect.DeepEqual(*r.EffectReceipt, receipt) {
+				return errNoMutation
 			}
+			return ErrStaleContract
 		}
 		if !ok || r.Status != "decision_accepted" || r.EffectEvidenceID != "" || !st.Last.ObservedAt.After(r.CompletedAt) {
 			return ErrStaleContract
@@ -624,6 +625,8 @@ func (s Store) VerifySolRecoveryEffectReceipt(ctx context.Context, fence int64, 
 			if t.ID == receipt.TaskID && t.Head == receipt.Head && t.PlanVersion == receipt.PlanVersion {
 				r.EffectEvidenceID = receipt.EvidenceID
 				r.EffectVerifiedAt = st.Last.ObservedAt
+				verifiedReceipt := receipt
+				r.EffectReceipt = &verifiedReceipt
 				r.Status = "effect_verified"
 				st.Recoveries[key] = r
 				return nil
