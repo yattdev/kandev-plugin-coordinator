@@ -28,6 +28,9 @@ type FixturePOCReport struct {
 	Decision governor.Result `json:"decision"`
 	Grant    FixtureGrant    `json:"grant"`
 	Readback FixtureReadback `json:"readback"`
+	Before   []governor.Task `json:"before"`
+	After    []governor.Task `json:"after"`
+	Denials  []string        `json:"denials"`
 }
 
 type FixtureGrant struct {
@@ -231,7 +234,11 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 	if err != nil {
 		return FixturePOCReport{}, err
 	}
-	return FixturePOCReport{Decision: decision, Grant: grant, Readback: readback}, nil
+	after, err := board.Read(ctx)
+	if err != nil {
+		return FixturePOCReport{}, err
+	}
+	return FixturePOCReport{Decision: decision, Grant: grant, Readback: readback, Before: origin.Tasks, After: after, Denials: []string{"competing_target_denied", "revoked_grant_denied"}}, nil
 }
 
 func fixtureActionCall(ctx context.Context, p *Plugin, observation governor.Observation) (governor.Result, error) {
