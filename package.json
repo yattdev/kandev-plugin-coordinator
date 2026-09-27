@@ -8,13 +8,19 @@
   "scripts": {
 		"build:ui": "esbuild ui/src/index.ts --bundle --format=iife --target=es2022 --outfile=ui/bundle.js",
 		"test:ui": "vitest run ui/src",
+		"test:ui:browser": "playwright test",
 		"typecheck:ui": "tsc --project tsconfig.ui.json --noEmit",
     "test:recipes": "vitest run recipes/source-control/ui",
     "typecheck:recipes": "tsc --project tsconfig.recipes.json --noEmit"
   },
   "devDependencies": {
+		"@playwright/test": "1.57.0",
+		"@types/react": "19.2.7",
+		"@types/react-dom": "19.2.3",
     "@kandev/plugin-sdk": "file:../kandev/apps/packages/plugin-sdk",
     "esbuild": "^0.27.0",
+		"react": "19.2.0",
+		"react-dom": "19.2.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   },

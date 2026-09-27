@@ -7,7 +7,8 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals"],
+    "jsx": "react-jsx"
   },
-  "include": ["ui/src/**/*.ts"]
+  "include": ["ui/src/**/*.ts", "ui/src/**/*.tsx"]
 }
