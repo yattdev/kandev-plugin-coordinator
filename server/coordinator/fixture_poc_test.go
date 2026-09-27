@@ -29,6 +29,14 @@ func TestFixturePOCUsesCoordinatorActionAndGovernorReceipt(t *testing.T) {
 	require.Equal(t, "Ready", report.Readback.State)
 	require.Len(t, report.Before, 3)
 	require.Len(t, report.After, 3)
+	require.Equal(t, "blocked-target", report.Before[0].ID)
+	require.Equal(t, "Blocked", report.Before[0].State)
+	require.Equal(t, "blocked-target", report.After[0].ID)
+	require.Equal(t, "Ready", report.After[0].State)
+	require.Equal(t, "done-dependency", report.Before[1].ID)
+	require.Equal(t, "Done", report.Before[1].State)
+	require.Equal(t, "in-progress", report.Before[2].ID)
+	require.Equal(t, "InProgress", report.Before[2].State)
 	require.Equal(t, []string{"done-dependency"}, report.Before[0].Dependencies)
 	require.Len(t, report.Denials, 3)
 	require.Equal(t, "stale_evidence", report.Denials[2].Reason)
@@ -45,9 +53,14 @@ func TestFixtureGrantDeniesCompetingTargetAndRevocation(t *testing.T) {
 	board := newFixtureBoard()
 	_, err = applyFixtureGrant(context.Background(), p, store, board, &grant, origin, "op", "competing-task", fixtureAction)
 	require.ErrorIs(t, err, ErrFixtureGrantDenied)
+	require.Equal(t, 0, board.mutations)
+	current, err := board.reader.Get(context.Background(), "blocked-target")
+	require.NoError(t, err)
+	require.Equal(t, "Blocked", current.State)
 	grant.Revoked = true
 	_, err = applyFixtureGrant(context.Background(), p, store, board, &grant, origin, "op", "blocked-target", fixtureAction)
 	require.ErrorIs(t, err, ErrFixtureGrantDenied)
+	require.Equal(t, 0, board.mutations)
 }
 
 func TestFixtureGrantReplayHasNoDuplicateEffect(t *testing.T) {
