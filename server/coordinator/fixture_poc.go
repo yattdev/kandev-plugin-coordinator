@@ -41,6 +41,40 @@ type FixtureReadback struct {
 	Receipt     string `json:"receipt"`
 	Replay      bool   `json:"replay"`
 }
+type fixtureBoard struct {
+	tasks     map[string]governor.Task
+	mutations int
+}
+
+func newFixtureBoard() *fixtureBoard {
+	b := &fixtureBoard{tasks: map[string]governor.Task{}}
+	for _, t := range fixtureObservation("x", "x", time.Now(), "Blocked").Tasks {
+		b.tasks[t.ID] = t
+	}
+	return b
+}
+func (b *fixtureBoard) Read() []governor.Task {
+	out := make([]governor.Task, 0, len(b.tasks))
+	for _, t := range b.tasks {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+func (b *fixtureBoard) Apply(target, action string) error {
+	if action != fixtureAction {
+		return ErrFixtureGrantDenied
+	}
+	t, ok := b.tasks[target]
+	if !ok || t.State != "Blocked" {
+		return ErrFixtureGrantDenied
+	}
+	t.State = "Ready"
+	t.BlockerReason = ""
+	b.tasks[target] = t
+	b.mutations++
+	return nil
+}
 
 // RunFixturePOC is the runnable Stage 0 driver. Its two snapshots traverse
 // Plugin.HandleAction -> ActionShadowObserve -> ShadowStoreObserver ->
@@ -77,7 +111,7 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 		return FixturePOCReport{}, err
 	}
 	grant := FixtureGrant{ID: "fixture-grant-1", TargetID: target, Action: fixtureAction}
-	readback, err := applyFixtureGrant(ctx, p, store, &grant, origin, "fixture-operation-1", target, fixtureAction)
+	readback, err := applyFixtureGrant(ctx, p, store, newFixtureBoard(), &grant, origin, "fixture-operation-1", target, fixtureAction)
 	if err != nil {
 		return FixturePOCReport{}, err
 	}
@@ -120,19 +154,28 @@ func fixtureTarget(result governor.Result) (string, error) {
 	return targets[0], nil
 }
 
-func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, grant *FixtureGrant, origin governor.Observation, operationID, target, action string) (FixtureReadback, error) {
+func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, grant *FixtureGrant, origin governor.Observation, operationID, target, action string) (FixtureReadback, error) {
 	if grant == nil || grant.Revoked || grant.TargetID != target || grant.Action != action {
 		return FixtureReadback{}, ErrFixtureGrantDenied
+	}
+	if prior, found, err := store.Durable.GetRecord(ctx, origin.WorkspaceID, operationID); err != nil {
+		return FixtureReadback{}, err
+	} else if found {
+		return FixtureReadback{OperationID: operationID, TaskID: target, State: prior.Body["state"].(string), Receipt: prior.Body["receipt"].(string), Replay: true}, nil
 	}
 	if grant.Used {
 		return FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: "fixture-evidence-effect", Replay: true}, nil
 	}
 	grant.Used = true
+	if err := board.Apply(target, action); err != nil {
+		return FixtureReadback{}, err
+	}
 	recovery := governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grant.ID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}
 	if err := store.RecordSolRecovery(ctx, 0, origin.WorkspaceID, recovery); err != nil {
 		return FixtureReadback{}, err
 	}
 	effect := fixtureObservation("fixture-effect", "fixture-evidence-effect", origin.ObservedAt.Add(time.Minute), "Ready")
+	effect.Tasks = board.Read()
 	if _, err := fixtureActionCall(ctx, p, effect); err != nil {
 		return FixtureReadback{}, err
 	}
@@ -140,7 +183,12 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, gra
 	if err := store.VerifySolRecoveryEffectReceipt(ctx, 0, origin.WorkspaceID, receipt); err != nil {
 		return FixtureReadback{}, err
 	}
-	return FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: receipt.EvidenceID}, nil
+	readback := FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: receipt.EvidenceID}
+	_, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, operationID, durablestate.KindDoneReceipt, map[string]any{"state": readback.State, "receipt": readback.Receipt}, durablestate.StorageInline)
+	if err != nil {
+		return FixtureReadback{}, err
+	}
+	return readback, nil
 }
 
 func fixtureObservation(event, evidence string, observed time.Time, targetState string) governor.Observation {

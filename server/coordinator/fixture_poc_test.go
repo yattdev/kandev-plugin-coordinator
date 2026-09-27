@@ -37,10 +37,11 @@ func TestFixtureGrantDeniesCompetingTargetAndRevocation(t *testing.T) {
 	_, err := fixtureActionCall(context.Background(), p, origin)
 	require.NoError(t, err)
 	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}
-	_, err = applyFixtureGrant(context.Background(), p, store, &grant, origin, "op", "competing-task", fixtureAction)
+	board := newFixtureBoard()
+	_, err = applyFixtureGrant(context.Background(), p, store, board, &grant, origin, "op", "competing-task", fixtureAction)
 	require.ErrorIs(t, err, ErrFixtureGrantDenied)
 	grant.Revoked = true
-	_, err = applyFixtureGrant(context.Background(), p, store, &grant, origin, "op", "blocked-target", fixtureAction)
+	_, err = applyFixtureGrant(context.Background(), p, store, board, &grant, origin, "op", "blocked-target", fixtureAction)
 	require.ErrorIs(t, err, ErrFixtureGrantDenied)
 }
 
@@ -52,9 +53,10 @@ func TestFixtureGrantReplayHasNoDuplicateEffect(t *testing.T) {
 	_, err := fixtureActionCall(context.Background(), p, origin)
 	require.NoError(t, err)
 	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}
-	_, err = applyFixtureGrant(context.Background(), p, store, &grant, origin, "op", "blocked-target", fixtureAction)
+	board := newFixtureBoard()
+	_, err = applyFixtureGrant(context.Background(), p, store, board, &grant, origin, "op", "blocked-target", fixtureAction)
 	require.NoError(t, err)
-	replay, err := applyFixtureGrant(context.Background(), p, store, &grant, origin, "op", "blocked-target", fixtureAction)
+	replay, err := applyFixtureGrant(context.Background(), p, store, board, &grant, origin, "op", "blocked-target", fixtureAction)
 	require.NoError(t, err)
 	require.True(t, replay.Replay)
 }
