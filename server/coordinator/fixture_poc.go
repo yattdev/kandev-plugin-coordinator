@@ -109,9 +109,9 @@ func newFixtureBoard() *fixtureBoard {
 	}
 	return b
 }
-func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureBoard, error) {
+func loadFixtureBoard(ctx context.Context, store *durablestate.Store, operationID string) (*fixtureBoard, error) {
 	b := newFixtureBoard()
-	rec, found, err := store.GetRecord(ctx, "fixture-workspace", "fixture-operation-1")
+	rec, found, err := store.GetRecord(ctx, "fixture-workspace", operationID)
 	if err != nil || !found {
 		return b, err
 	}
@@ -256,7 +256,7 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 		return FixturePOCReport{}, fmt.Errorf("fixture POC: expected stale evidence denial")
 	}
 	denials = append(denials, FixtureDenial{"stale_evidence", target})
-	board, err = loadFixtureBoard(ctx, store.Durable)
+	board, err = loadFixtureBoard(ctx, store.Durable, "fixture-operation-1")
 	if err != nil {
 		return FixturePOCReport{}, err
 	}

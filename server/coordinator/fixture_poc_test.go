@@ -106,7 +106,7 @@ func TestFixtureGrantReplaySurvivesStoreReopen(t *testing.T) {
 	require.NoError(t, d.Migrate(ctx))
 	defer d.Close()
 	store.Durable = d
-	board, err = loadFixtureBoard(ctx, d)
+	board, err = loadFixtureBoard(ctx, d, "op")
 	require.NoError(t, err)
 	require.Equal(t, "Ready", board.tasks["blocked-target"].State)
 	rows, err := board.Read(ctx)
@@ -131,7 +131,7 @@ func TestUnverifiedFixtureProjectionReopensUnknown(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, d.Migrate(ctx))
 	defer d.Close()
-	_, err = loadFixtureBoard(ctx, d)
+	_, err = loadFixtureBoard(ctx, d, "fixture-operation-1")
 	require.ErrorIs(t, err, ErrFixtureOutcomeUnknown)
 }
 
