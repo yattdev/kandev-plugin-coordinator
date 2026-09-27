@@ -55,7 +55,10 @@ type fixtureBoard struct {
 	mutations int
 	reader    *fixtureTaskReader
 }
-type fixtureTaskReader struct{ rows map[string]pluginsdk.Task }
+type fixtureTaskReader struct {
+	rows    map[string]pluginsdk.Task
+	listErr error
+}
 
 var _ pluginsdk.TaskReader = (*fixtureTaskReader)(nil)
 
@@ -63,6 +66,9 @@ func newFixtureTaskReader() *fixtureTaskReader {
 	return &fixtureTaskReader{rows: map[string]pluginsdk.Task{"done-dependency": {ID: "done-dependency", WorkspaceID: "fixture-workspace", State: "Done"}, "blocked-target": {ID: "blocked-target", WorkspaceID: "fixture-workspace", State: "Blocked", Metadata: map[string]any{"dependencies": []string{"done-dependency"}}}, "in-progress": {ID: "in-progress", WorkspaceID: "fixture-workspace", State: "InProgress"}}}
 }
 func (r *fixtureTaskReader) List(_ context.Context, _ pluginsdk.TaskFilter, page pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
+	if r.listErr != nil {
+		return nil, nil, r.listErr
+	}
 	out := make([]pluginsdk.Task, 0, len(r.rows))
 	for _, t := range r.rows {
 		out = append(out, t)

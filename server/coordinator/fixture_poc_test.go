@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -132,4 +133,11 @@ func TestUnverifiedFixtureProjectionReopensUnknown(t *testing.T) {
 	defer d.Close()
 	_, err = loadFixtureBoard(ctx, d)
 	require.ErrorIs(t, err, ErrFixtureOutcomeUnknown)
+}
+
+func TestFixtureReaderFailureFailsClosed(t *testing.T) {
+	board := newFixtureBoard()
+	board.reader.listErr = errors.New("list failed")
+	_, err := board.Read(context.Background())
+	require.ErrorContains(t, err, "list failed")
 }
