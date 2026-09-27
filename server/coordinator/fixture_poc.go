@@ -45,6 +45,7 @@ type FixtureReadback struct {
 type fixtureBoard struct {
 	tasks     map[string]governor.Task
 	mutations int
+	reader    *fixtureTaskReader
 }
 type fixtureTaskReader struct{ rows map[string]pluginsdk.Task }
 
@@ -81,7 +82,7 @@ func (r *fixtureTaskReader) Update(_ context.Context, in pluginsdk.UpdateTaskInp
 }
 
 func newFixtureBoard() *fixtureBoard {
-	b := &fixtureBoard{tasks: map[string]governor.Task{}}
+	b := &fixtureBoard{tasks: map[string]governor.Task{}, reader: newFixtureTaskReader()}
 	for _, t := range fixtureObservation("x", "x", time.Now(), "Blocked").Tasks {
 		b.tasks[t.ID] = t
 	}
@@ -110,6 +111,9 @@ func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureB
 	return b, nil
 }
 func (b *fixtureBoard) Read() []governor.Task {
+	if b.reader != nil {
+		_, _, _ = b.reader.List(context.Background(), pluginsdk.TaskFilter{}, pluginsdk.Page{})
+	}
 	out := make([]governor.Task, 0, len(b.tasks))
 	for _, t := range b.tasks {
 		out = append(out, t)
@@ -126,6 +130,12 @@ func (b *fixtureBoard) Apply(target, action string) error {
 		return ErrFixtureGrantDenied
 	}
 	t.State = "Ready"
+	if b.reader != nil {
+		state := "Ready"
+		if _, err := b.reader.Update(context.Background(), pluginsdk.UpdateTaskInput{ID: target, State: &state}); err != nil {
+			return err
+		}
+	}
 	t.BlockerReason = ""
 	b.tasks[target] = t
 	b.mutations++
