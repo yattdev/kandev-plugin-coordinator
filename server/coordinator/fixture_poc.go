@@ -240,6 +240,9 @@ func (b *fixtureBoard) Read(ctx context.Context) ([]governor.Task, error) {
 				return nil, fmt.Errorf("fixture POC: unknown listed task %q", row.ID)
 			}
 			task.State = row.State
+			if row.State != "Blocked" {
+				task.BlockerReason = ""
+			}
 			if deps, ok := row.Metadata["dependencies"].([]string); ok {
 				task.Dependencies = deps
 			}
@@ -393,6 +396,7 @@ func fixtureTarget(result governor.Result) (string, error) {
 type fixtureApplyHooks struct {
 	BeforeOperationRecord func() error
 	AfterEffect           func() error
+	BeforeFinalRecord     func() error
 }
 
 func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, grant *FixtureGrant, origin governor.Observation, operationID, target, action string) (FixtureReadback, error) {
@@ -438,9 +442,14 @@ func applyFixtureGrantWithHooks(ctx context.Context, p *Plugin, store governor.S
 			return FixtureReadback{}, err
 		}
 		if ready {
-			return finishFixtureGrant(ctx, p, store, board, origin, operationID, target, action, grant.ID, true)
+			return finishFixtureGrant(ctx, p, store, board, origin, operationID, target, action, grant.ID, true, hooks)
 		}
 	} else {
+		// Bind a fresh intent to the whole originating observation. A later
+		// observation with the same evidence token is still a superseding denial.
+		if err := store.ValidateCurrentObservation(ctx, origin); err != nil {
+			return FixtureReadback{}, ErrFixtureGrantDenied
+		}
 		if hooks.BeforeOperationRecord != nil {
 			if err := hooks.BeforeOperationRecord(); err != nil {
 				return FixtureReadback{}, err
@@ -460,7 +469,7 @@ func applyFixtureGrantWithHooks(ctx context.Context, p *Plugin, store governor.S
 			return FixtureReadback{}, err
 		}
 	}
-	return finishFixtureGrant(ctx, p, store, board, origin, operationID, target, action, grant.ID, false)
+	return finishFixtureGrant(ctx, p, store, board, origin, operationID, target, action, grant.ID, false, hooks)
 }
 
 func fixtureBoardState(ctx context.Context, board *fixtureBoard, target string) (bool, error) {
@@ -476,7 +485,7 @@ func fixtureBoardState(ctx context.Context, board *fixtureBoard, target string) 
 	return false, ErrFixtureGrantDenied
 }
 
-func finishFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, origin governor.Observation, operationID, target, action, grantID string, replay bool) (FixtureReadback, error) {
+func finishFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, board *fixtureBoard, origin governor.Observation, operationID, target, action, grantID string, replay bool, hooks fixtureApplyHooks) (FixtureReadback, error) {
 	recovery := governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grantID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}
 	if err := store.RecordSolRecovery(ctx, 0, origin.WorkspaceID, recovery); err != nil {
 		return FixtureReadback{}, err
@@ -493,6 +502,11 @@ func finishFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, bo
 	receipt := governor.RecoveryEffectReceipt{IncidentID: recovery.IncidentID, EventID: effect.EventID, EvidenceID: effect.EvidenceID, TaskID: target, Head: "fixture-head", PlanVersion: effect.PlanVersion, StrategyVersion: effect.StrategyVersion, Verifier: "fixture-readback", Milestone: "Ready", ObservedAt: effect.ObservedAt}
 	if err := store.VerifySolRecoveryEffectReceipt(ctx, 0, origin.WorkspaceID, receipt); err != nil {
 		return FixtureReadback{}, err
+	}
+	if hooks.BeforeFinalRecord != nil {
+		if err := hooks.BeforeFinalRecord(); err != nil {
+			return FixtureReadback{}, err
+		}
 	}
 	readback := FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: receipt.EvidenceID, Replay: replay}
 	projection := map[string]any{"phase": "verified", "state": "Ready", "receipt": receipt.EvidenceID, "target": target, "action": action, "grant": grantID, "evidence": origin.EvidenceID, "operation": operationID, "verified": true}

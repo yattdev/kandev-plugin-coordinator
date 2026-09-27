@@ -78,6 +78,34 @@ func TestFixtureGrantDeniesCompetingTargetAndRevocation(t *testing.T) {
 	require.Equal(t, 0, board.mutations)
 }
 
+func TestFixtureGrantDeniesSupersededOriginBeforeIntentOrMutation(t *testing.T) {
+	ctx := context.Background()
+	store := fixtureStore(t)
+	p := New()
+	p.SetShadowObserver(ShadowStoreObserver{Store: &store})
+	origin := fixtureObservation("origin", "shared-evidence", time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), "Blocked")
+	_, err := fixtureActionCall(ctx, p, origin)
+	require.NoError(t, err)
+	superseding := origin
+	superseding.EventID = "origin-superseded"
+	superseding.ObservedAt = origin.ObservedAt.Add(time.Minute)
+	// The evidence token intentionally remains unchanged: the grant must still
+	// be rejected because its complete origin observation is no longer current.
+	_, err = fixtureActionCall(ctx, p, superseding)
+	require.NoError(t, err)
+	board := fixtureTestBoard(t, store.Durable)
+	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction, EvidenceID: origin.EvidenceID}
+	_, err = applyFixtureGrant(ctx, p, store, board, &grant, origin, "superseded-op", "blocked-target", fixtureAction)
+	require.ErrorIs(t, err, ErrFixtureGrantDenied)
+	require.Equal(t, 0, board.mutations)
+	task, err := board.taskReader.Get(ctx, "blocked-target")
+	require.NoError(t, err)
+	require.Equal(t, "Blocked", task.State)
+	_, found, err := store.Durable.GetRecord(ctx, origin.WorkspaceID, "superseded-op")
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
 func TestFixtureBoardUsesHostTasksBoundary(t *testing.T) {
 	board := fixtureTestBoard(t, nil)
 	require.Same(t, board.taskReader, board.host.Tasks())
@@ -178,7 +206,7 @@ func TestFixtureReaderIncompleteCursorFailsClosed(t *testing.T) {
 	require.ErrorIs(t, err, ErrFixtureGrantDenied)
 }
 
-func TestFixtureGrantReconcilesInterruptionAfterEffect(t *testing.T) {
+func TestFixtureGrantReconcilesInterruptionAfterGovernorVerification(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "reconcile.db")
 	d, err := durablestate.Open(path)
@@ -193,7 +221,7 @@ func TestFixtureGrantReconcilesInterruptionAfterEffect(t *testing.T) {
 	grant := FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction, EvidenceID: origin.EvidenceID}
 	interrupted := fixtureTestBoard(t, d)
 	fault := errors.New("injected interruption")
-	_, err = applyFixtureGrantWithHooks(ctx, p, store, interrupted, &grant, origin, "op", "blocked-target", fixtureAction, fixtureApplyHooks{AfterEffect: func() error { return fault }})
+	_, err = applyFixtureGrantWithHooks(ctx, p, store, interrupted, &grant, origin, "op", "blocked-target", fixtureAction, fixtureApplyHooks{BeforeFinalRecord: func() error { return fault }})
 	require.ErrorIs(t, err, fault)
 	require.Equal(t, 1, interrupted.mutations)
 	require.NoError(t, d.Close())
@@ -211,6 +239,10 @@ func TestFixtureGrantReconcilesInterruptionAfterEffect(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, replay.Replay)
 	require.Equal(t, 0, restarted.mutations)
+	rows, err := restarted.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "Ready", rows[0].State)
+	require.Empty(t, rows[0].BlockerReason)
 	record, found, err := d.GetRecord(ctx, "fixture-workspace", "op")
 	require.NoError(t, err)
 	require.True(t, found)

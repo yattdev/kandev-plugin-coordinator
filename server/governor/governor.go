@@ -290,6 +290,19 @@ func (s Store) load(ctx context.Context, workspace string) (state, bool, error) 
 	return v, true, err
 }
 
+// ValidateCurrentObservation proves an action remains bound to the complete
+// observation that authorized it, without recording an intent or effect.
+func (s Store) ValidateCurrentObservation(ctx context.Context, in Observation) error {
+	st, found, err := s.load(ctx, in.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if !found || !in.Complete || !st.Last.Complete || st.Last.EventID != in.EventID || st.Last.EvidenceID != in.EvidenceID || !st.Last.ObservedAt.Equal(in.ObservedAt) || st.Last.StrategyVersion != in.StrategyVersion || st.Last.PlanVersion != in.PlanVersion {
+		return ErrStaleContract
+	}
+	return nil
+}
+
 // transform applies fn to precisely the record that is later compared and
 // swapped.  A conflict is retried from a newly decoded record; callers never
 // write a body derived from a stale read.
@@ -586,6 +599,15 @@ func (s Store) VerifySolRecoveryEffectReceipt(ctx context.Context, fence int64, 
 		}
 		key := receipt.IncidentID + "/" + fmt.Sprint(receipt.StrategyVersion) + "/" + fmt.Sprint(receipt.PlanVersion)
 		r, ok := st.Recoveries[key]
+		// A projection may lag a committed receipt across interruption. The exact
+		// receipt is a lost-response replay rather than a second effect.
+		if ok && r.Status == "effect_verified" && r.EffectEvidenceID == receipt.EvidenceID && r.EffectVerifiedAt.Equal(receipt.ObservedAt) {
+			for _, id := range r.AffectedTaskIDs {
+				if id == receipt.TaskID {
+					return errNoMutation
+				}
+			}
+		}
 		if !ok || r.Status != "decision_accepted" || r.EffectEvidenceID != "" || !st.Last.ObservedAt.After(r.CompletedAt) {
 			return ErrStaleContract
 		}
