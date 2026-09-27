@@ -1,4 +1,4 @@
-.PHONY: build run test test-backend build-ui test-ui typecheck-ui test-recipes typecheck-recipes audit-recipes \
+.PHONY: build run test test-backend build-ui test-ui test-ui-browser typecheck-ui test-recipes typecheck-recipes audit-recipes \
 	fmt vet package package-host verify-package verify-package-host verify-contract clean
 
 # When you rename the plugin, update BIN and VERSION to match manifest.yaml's
@@ -42,6 +42,9 @@ build-ui:
 
 test-ui:
 	npm run test:ui
+
+test-ui-browser:
+	npm run test:ui:browser
 
 typecheck-ui:
 	npm run typecheck:ui

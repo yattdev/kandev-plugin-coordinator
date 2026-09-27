@@ -1,6 +1,9 @@
 /bin/
 /.build/
 /node_modules/
+/.fixture-ui/
+/playwright-report/
+/test-results/
 *.tar.gz
 __pycache__/
 *.pyc

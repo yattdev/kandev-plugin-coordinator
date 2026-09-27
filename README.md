@@ -113,6 +113,15 @@ make verify-contract
 make verify-package-host
 ```
 
+### Synthetic browser UI evidence
+
+`npm run test:ui:browser` runs the Coordinator page in Playwright through a
+typed in-memory `CoordinatorHost`. It records screenshots in the ignored
+`test-results/` directory for configuration, report pagination, denied action,
+and recovery/run states. This is synthetic fixture evidence only: it does not
+call a Host, board, provider, or credentials, and it does not replace later
+typed live-fork Host integration/E2E or the Stage 2 QA contract.
+
 When the host checkout lives elsewhere, create a temporary Go workspace that
 replaces `github.com/kandev/kandev` with that checkout, then export `GOWORK` for
 Go and Make commands. `make build-ui` reproducibly generates the checked-in
