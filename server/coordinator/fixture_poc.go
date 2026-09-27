@@ -53,6 +53,24 @@ func newFixtureBoard() *fixtureBoard {
 	}
 	return b
 }
+func loadFixtureBoard(ctx context.Context, store *durablestate.Store) (*fixtureBoard, error) {
+	b := newFixtureBoard()
+	rec, found, err := store.GetRecord(ctx, "fixture-workspace", "fixture-board")
+	if err != nil || !found {
+		return b, err
+	}
+	target, ok := rec.Body["target"].(string)
+	state, sok := rec.Body["state"].(string)
+	if !ok || !sok || target != "blocked-target" || state != "Ready" {
+		return nil, ErrFixtureGrantDenied
+	}
+	t := b.tasks[target]
+	t.State = state
+	t.BlockerReason = ""
+	b.tasks[target] = t
+	b.mutations = 1
+	return b, nil
+}
 func (b *fixtureBoard) Read() []governor.Task {
 	out := make([]governor.Task, 0, len(b.tasks))
 	for _, t := range b.tasks {
@@ -111,7 +129,11 @@ func runFixturePOC(ctx context.Context, store governor.Store) (FixturePOCReport,
 		return FixturePOCReport{}, err
 	}
 	grant := FixtureGrant{ID: "fixture-grant-1", TargetID: target, Action: fixtureAction}
-	readback, err := applyFixtureGrant(ctx, p, store, newFixtureBoard(), &grant, origin, "fixture-operation-1", target, fixtureAction)
+	board, err := loadFixtureBoard(ctx, store.Durable)
+	if err != nil {
+		return FixturePOCReport{}, err
+	}
+	readback, err := applyFixtureGrant(ctx, p, store, board, &grant, origin, "fixture-operation-1", target, fixtureAction)
 	if err != nil {
 		return FixturePOCReport{}, err
 	}
@@ -171,11 +193,11 @@ func applyFixtureGrant(ctx context.Context, p *Plugin, store governor.Store, boa
 		}
 		return FixtureReadback{OperationID: operationID, TaskID: target, State: state, Receipt: receipt, Replay: true}, nil
 	}
-	if grant.Used {
-		return FixtureReadback{OperationID: operationID, TaskID: target, State: "Ready", Receipt: "fixture-evidence-effect", Replay: true}, nil
-	}
 	grant.Used = true
 	if err := board.Apply(target, action); err != nil {
+		return FixtureReadback{}, err
+	}
+	if _, err := store.Durable.AppendAdd(ctx, origin.WorkspaceID, 0, "fixture-board", durablestate.KindDirtyTask, map[string]any{"target": target, "state": "Ready"}, durablestate.StorageInline); err != nil {
 		return FixtureReadback{}, err
 	}
 	recovery := governor.SolRecovery{IncidentID: "fixture-incident", EventID: origin.EventID, EvidenceID: origin.EvidenceID, RequestID: operationID, ReceiptID: operationID + "/accepted", ProposedAction: action, ExpectedEffect: "task becomes Ready", ActualModel: governor.TierSol, ActualModelReceipt: grant.ID, Status: "decision_accepted", Accepted: true, StrategyVersion: origin.StrategyVersion, PlanVersion: origin.PlanVersion, CompletedAt: origin.ObservedAt, EffectDueAt: origin.ObservedAt.Add(time.Hour), AffectedTaskIDs: []string{target}}

@@ -84,6 +84,9 @@ func TestFixtureGrantReplaySurvivesStoreReopen(t *testing.T) {
 	require.NoError(t, d.Migrate(ctx))
 	defer d.Close()
 	store.Durable = d
+	board, err = loadFixtureBoard(ctx, d)
+	require.NoError(t, err)
+	require.Equal(t, "Ready", board.tasks["blocked-target"].State)
 	replay, err := applyFixtureGrant(ctx, New(), store, board, &FixtureGrant{ID: "g", TargetID: "blocked-target", Action: fixtureAction}, origin, "op", "blocked-target", fixtureAction)
 	require.NoError(t, err)
 	require.True(t, replay.Replay)
