@@ -46,6 +46,37 @@ type fixtureBoard struct {
 	tasks     map[string]governor.Task
 	mutations int
 }
+type fixtureTaskReader struct{ rows map[string]pluginsdk.Task }
+
+func newFixtureTaskReader() *fixtureTaskReader {
+	return &fixtureTaskReader{rows: map[string]pluginsdk.Task{"done-dependency": {ID: "done-dependency", WorkspaceID: "fixture-workspace", State: "Done"}, "blocked-target": {ID: "blocked-target", WorkspaceID: "fixture-workspace", State: "Blocked", Metadata: map[string]any{"dependencies": []string{"done-dependency"}}}, "in-progress": {ID: "in-progress", WorkspaceID: "fixture-workspace", State: "InProgress"}}}
+}
+func (r *fixtureTaskReader) List(_ context.Context, _ pluginsdk.TaskFilter, _ pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
+	out := make([]pluginsdk.Task, 0, len(r.rows))
+	for _, t := range r.rows {
+		out = append(out, t)
+	}
+	return out, &pluginsdk.PageInfo{}, nil
+}
+func (r *fixtureTaskReader) Get(_ context.Context, id string) (*pluginsdk.Task, error) {
+	t, ok := r.rows[id]
+	if !ok {
+		return nil, ErrFixtureGrantDenied
+	}
+	return &t, nil
+}
+func (r *fixtureTaskReader) Create(context.Context, pluginsdk.CreateTaskInput) (*pluginsdk.Task, error) {
+	return nil, ErrFixtureGrantDenied
+}
+func (r *fixtureTaskReader) Update(_ context.Context, in pluginsdk.UpdateTaskInput) (*pluginsdk.Task, error) {
+	t, ok := r.rows[in.ID]
+	if !ok || in.State == nil {
+		return nil, ErrFixtureGrantDenied
+	}
+	t.State = *in.State
+	r.rows[in.ID] = t
+	return &t, nil
+}
 
 func newFixtureBoard() *fixtureBoard {
 	b := &fixtureBoard{tasks: map[string]governor.Task{}}
