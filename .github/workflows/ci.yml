@@ -61,6 +61,10 @@ jobs:
         run: |
           test -z "$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
 
+      - name: Verify beta artifact metadata and failure modes
+        working-directory: plugin
+        run: python3 -m unittest scripts/test_beta_artifact.py -v
+
       - name: Vet
         working-directory: plugin
         run: make vet

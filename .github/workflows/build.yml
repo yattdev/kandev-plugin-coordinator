@@ -52,6 +52,6 @@ jobs:
         working-directory: plugin
         run: make build
 
-      - name: Package and validate all supported platforms
+      - name: Package, verify, and reproduce all supported platforms
         working-directory: plugin
-        run: make verify-package
+        run: make reproducible-beta
