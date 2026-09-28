@@ -22,8 +22,9 @@ BETA_OUT := kandev-plugin-coordinator-$(VERSION).validation.json
 KANDEV_SDK := ../kandev/apps/backend
 # Final beta artifacts must always use the SDK checkout that the sidecar
 # attests. Keep KANDEV_SDK configurable for ordinary development packaging,
-# but do not allow that caller override onto beta/reproducibility paths.
-BETA_KANDEV_SDK := ../kandev/apps/backend
+# but do not allow caller variables or inherited MAKEFLAGS to select a
+# different SDK on beta/reproducibility paths.
+override BETA_KANDEV_SDK := ../kandev/apps/backend
 
 ## Build the plugin binary for the host platform (development use). kandev
 ## itself always installs from `make package`/`package-host` output, not this.
@@ -183,9 +184,9 @@ verify-beta-artifact:
 ## bytes before emitting and verifying its provenance sidecar.
 reproducible-beta:
 	@set -e; first="$$(mktemp)"; trap 'rm -f "$$first"' EXIT; \
-		$(MAKE) --no-print-directory KANDEV_SDK="$(BETA_KANDEV_SDK)" package; \
+		$(MAKE) --no-print-directory beta-package; \
 		cp "$(PKG_OUT)" "$$first"; \
-		$(MAKE) --no-print-directory KANDEV_SDK="$(BETA_KANDEV_SDK)" package; \
+		$(MAKE) --no-print-directory beta-package; \
 		cmp -s "$$first" "$(PKG_OUT)" || { echo "reproducibility check failed: archive bytes differ" >&2; exit 1; }; \
 		python3 -c 'import hashlib, sys; print("first_sha256=" + hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()); print("second_sha256=" + hashlib.sha256(open(sys.argv[2], "rb").read()).hexdigest())' "$$first" "$(PKG_OUT)"; \
 		python3 scripts/beta_artifact.py create --root . --archive "$(PKG_OUT)" --output "$(BETA_OUT)" --verification-command "make verify-beta-artifact"; \

@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import tarfile
 import tempfile
@@ -129,6 +130,28 @@ class BetaArtifactTests(unittest.TestCase):
         self.assertEqual(beta_target.returncode, 0, beta_target.stderr)
         self.assertIn("cd ../kandev/apps/backend &&", beta_target.stdout)
         self.assertNotIn("/tmp/untrusted-sdk", beta_target.stdout)
+        adversarial = subprocess.run(
+            ["make", "-n", "KANDEV_SDK=/tmp/untrusted-sdk", "BETA_KANDEV_SDK=/tmp/attacker-sdk", "beta-package"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(adversarial.returncode, 0, adversarial.stderr)
+        self.assertIn("cd ../kandev/apps/backend &&", adversarial.stdout)
+        self.assertNotIn("/tmp/untrusted-sdk", adversarial.stdout)
+        self.assertNotIn("/tmp/attacker-sdk", adversarial.stdout)
+        environment = os.environ | {"MAKEFLAGS": "KANDEV_SDK=/tmp/untrusted-sdk BETA_KANDEV_SDK=/tmp/attacker-sdk"}
+        inherited = subprocess.run(
+            ["make", "-n", "beta-package"], cwd=root, text=True, capture_output=True, env=environment,
+        )
+        self.assertEqual(inherited.returncode, 0, inherited.stderr)
+        self.assertIn("cd ../kandev/apps/backend &&", inherited.stdout)
+        self.assertNotIn("/tmp/untrusted-sdk", inherited.stdout)
+        self.assertNotIn("/tmp/attacker-sdk", inherited.stdout)
+        reproducible_database = subprocess.run(
+            ["make", "-pRrq", "KANDEV_SDK=/tmp/untrusted-sdk", "BETA_KANDEV_SDK=/tmp/attacker-sdk"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(reproducible_database.stderr, "")
+        self.assertIn("$(MAKE) --no-print-directory beta-package", reproducible_database.stdout)
 
     def test_cli_accepts_root_after_subcommand(self):
         result = subprocess.run(

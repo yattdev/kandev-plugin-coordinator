@@ -28,12 +28,13 @@ full bytes, prints both SHA-256 values, writes
 `make verify-beta-artifact` rechecks an existing pair without rebuilding it.
 
 Ordinary `make package` remains configurable through `KANDEV_SDK` for local
-development. Beta commands do not inherit that override: `beta-package`
-target-specifically overrides it for its `package` prerequisite, and both
-reproducibility builds invoke `package` with the pinned sibling
-`../kandev/apps/backend` path explicitly. This binds the `plugin-pack` source
-used for the archive to the clean immutable checkout that sidecar creation
-attests.
+development. Beta commands do not inherit that override: the Makefile sets
+the beta SDK through an `override` assignment, so command-line variables,
+environment variables, and inherited `MAKEFLAGS` cannot substitute it.
+`beta-package` target-specifically overrides `KANDEV_SDK` for its `package`
+prerequisite, and both reproducibility builds invoke `beta-package`. This
+binds the `plugin-pack` source used for the archive to the clean immutable
+checkout that sidecar creation attests.
 
 The reproducibility claim is limited to two sequential builds on this machine,
 from the same clean commit and local Go/Node/npm toolchain with the stated SDK
