@@ -8,8 +8,11 @@ release and it does not make the Coordinator beta-ready.
 Use a clean, committed plugin checkout at an exact commit. The required SDK is
 the sibling checkout described in the README, pinned to
 `kdlbs/kandev@ff9b8b8ecfd32a7ca00708bbbbff330dc9ccc7a7`; its backend must be
-available at `../kandev/apps/backend`. Install the locked Node dependencies
-with `npm ci --ignore-scripts --include=dev` first.
+available at `../kandev/apps/backend`. Sidecar creation resolves
+`../kandev` to that exact commit and requires it to be clean, so it cannot
+assert SDK provenance for a missing, changed, or different checkout. Install
+the locked Node dependencies with `npm ci --ignore-scripts --include=dev`
+first.
 
 Run:
 
@@ -54,9 +57,10 @@ record an exact 40-hex fork head with `status: "recorded"`; it may use
 
 The verifier rejects a dirty final source tree, malformed or mismatched plugin
 identity/commit, archive digest changes, unsafe or unexpected package paths,
-missing payload checksums, invalid checksums, malformed gate ledgers, and a
-`passed` gate without evidence. It also rejects any claimed Coordinator
-acceptance in this candidate sidecar.
+missing required locale and prompt assets, a packaged manifest that differs
+byte-for-byte from the source manifest, missing payload checksums, invalid
+checksums, malformed gate ledgers, and a `passed` gate without evidence. It
+also rejects any claimed Coordinator acceptance in this candidate sidecar.
 
 ## Validation ledger
 

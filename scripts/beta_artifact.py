@@ -28,6 +28,15 @@ GATE_NAMES = (
 VALID_GATE_STATES = {"not_run", "unavailable", "passed", "failed"}
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+REQUIRED_PACKAGE_ASSETS = frozenset({
+    "ui/locales/en.json",
+    "ui/locales/fr.json",
+    "ui/locales/qps-ploc.json",
+    "prompts/coordinator.md",
+    "prompts/monitoring-cycle.md",
+    "prompts/default-report-template.md",
+    "prompts/RUNBOOK.md",
+})
 
 
 class ValidationError(Exception):
@@ -93,7 +102,13 @@ def parse_checksums(data: bytes) -> dict[str, str]:
     return result
 
 
-def validate_archive(archive: Path, expected_id: str, expected_version: str, executables: set[str]) -> None:
+def validate_archive(
+    archive: Path,
+    expected_id: str,
+    expected_version: str,
+    executables: set[str],
+    expected_manifest: bytes,
+) -> None:
     if not archive.is_file():
         fail(f"archive does not exist: {archive}")
     try:
@@ -116,9 +131,11 @@ def validate_archive(archive: Path, expected_id: str, expected_version: str, exe
                 payloads[name] = source.read()
     except (tarfile.TarError, OSError) as error:
         fail(f"invalid gzip tar archive: {error}")
-    required = {"manifest.yaml", "ui/bundle.js", "checksums.txt", *executables}
+    required = {"manifest.yaml", "ui/bundle.js", "checksums.txt", *executables, *REQUIRED_PACKAGE_ASSETS}
     if not required.issubset(payloads):
         fail("archive is missing required package members")
+    if payloads["manifest.yaml"] != expected_manifest:
+        fail("packaged manifest.yaml differs from source manifest.yaml")
     try:
         archive_id, archive_version, archive_executables = read_plugin_identity_from_text(payloads["manifest.yaml"])
     except UnicodeDecodeError:
@@ -153,6 +170,19 @@ def assert_clean_committed(root: Path) -> str:
     return commit
 
 
+def assert_pinned_sdk_checkout(root: Path) -> str:
+    """Require the sibling SDK source used by plugin-pack to be the pinned commit."""
+    sdk_root = root.parent / "kandev"
+    if not sdk_root.is_dir():
+        fail(f"pinned SDK checkout is missing: {sdk_root}")
+    commit = command("git", "rev-parse", "HEAD", cwd=sdk_root)
+    if commit != SDK_COMMIT:
+        fail("pinned SDK checkout is not at the recorded commit")
+    if command("git", "status", "--porcelain", cwd=sdk_root):
+        fail("pinned SDK checkout must be clean")
+    return commit
+
+
 def default_gates() -> list[dict[str, object]]:
     external = {"stage_1_adapter", "paired_exact_head_host_plugin_integration", "stage_2_disposable_two_workspace_e2e", "plugin_pr_ci", "coordinator_acceptance"}
     return [{"name": name, "status": "unavailable" if name in external else "not_run", "evidence": []} for name in GATE_NAMES]
@@ -170,7 +200,9 @@ def validate_sidecar(data: object, root: Path, require_clean: bool) -> dict[str,
     gates = data["gates"]
     if not all(isinstance(value, dict) for value in (plugin, build, artifact, host)) or not isinstance(gates, list):
         fail("sidecar sections have invalid types")
-    expected_id, expected_version, executables = read_plugin_identity(root / "manifest.yaml")
+    manifest = root / "manifest.yaml"
+    expected_manifest = manifest.read_bytes()
+    expected_id, expected_version, executables = read_plugin_identity(manifest)
     if plugin != {"id": expected_id, "version": expected_version, "commit": plugin.get("commit")} or not HEX40.fullmatch(str(plugin.get("commit", ""))):
         fail("plugin identity or commit is malformed or differs from manifest.yaml")
     if set(build) != {"go_version", "node_version", "npm_version", "sdk_commit", "verification_command"} or build["sdk_commit"] != SDK_COMMIT:
@@ -203,7 +235,7 @@ def validate_sidecar(data: object, root: Path, require_clean: bool) -> dict[str,
         fail(f"archive does not exist: {archive}")
     if sha256_file(archive) != artifact["sha256"]:
         fail("artifact SHA-256 differs from sidecar")
-    validate_archive(archive, expected_id, expected_version, executables)
+    validate_archive(archive, expected_id, expected_version, executables, expected_manifest)
     if require_clean and assert_clean_committed(root) != plugin["commit"]:
         fail("sidecar plugin commit is not the clean checked-out HEAD")
     return data
@@ -214,8 +246,11 @@ def create(args: argparse.Namespace) -> None:
     archive = Path(args.archive).resolve()
     output = Path(args.output).resolve()
     commit = assert_clean_committed(root)
-    identifier, version, executables = read_plugin_identity(root / "manifest.yaml")
-    validate_archive(archive, identifier, version, executables)
+    assert_pinned_sdk_checkout(root)
+    manifest = root / "manifest.yaml"
+    expected_manifest = manifest.read_bytes()
+    identifier, version, executables = read_plugin_identity(manifest)
+    validate_archive(archive, identifier, version, executables, expected_manifest)
     tool_versions = {
         "go_version": command("go", "version", cwd=root),
         "node_version": command("node", "--version", cwd=root),

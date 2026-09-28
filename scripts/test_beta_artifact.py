@@ -20,7 +20,8 @@ MANIFEST = b'''id: "kandev-plugin-coordinator"\napi_version: 1\nversion: "0.1.0"
 
 class BetaArtifactTests(unittest.TestCase):
     def make_archive(self, directory: Path, mutate=None) -> Path:
-        payloads = {"manifest.yaml": MANIFEST, "ui/bundle.js": b"bundle", "ui/locales/en.json": b"{}", "prompts/coordinator.md": b"prompt"}
+        payloads = {"manifest.yaml": MANIFEST, "ui/bundle.js": b"bundle"}
+        payloads.update({name: name.encode() for name in beta.REQUIRED_PACKAGE_ASSETS})
         for name in beta.read_plugin_identity_from_text(MANIFEST)[2]:
             payloads[name] = b"binary:" + name.encode()
         if mutate:
@@ -39,12 +40,12 @@ class BetaArtifactTests(unittest.TestCase):
             root = Path(raw)
             archive = self.make_archive(root)
             _, _, executables = beta.read_plugin_identity_from_text(MANIFEST)
-            beta.validate_archive(archive, "kandev-plugin-coordinator", "0.1.0", executables)
+            beta.validate_archive(archive, "kandev-plugin-coordinator", "0.1.0", executables, MANIFEST)
             bad = self.make_archive(root, lambda payloads: payloads.__setitem__("ui/bundle.js", b"tampered"))
             # Rewrite a valid archive then flip one compressed byte: either gzip or checksum validation must fail.
             content = bytearray(bad.read_bytes()); content[len(content) // 2] ^= 1; bad.write_bytes(content)
             with self.assertRaises(beta.ValidationError):
-                beta.validate_archive(bad, "kandev-plugin-coordinator", "0.1.0", executables)
+                beta.validate_archive(bad, "kandev-plugin-coordinator", "0.1.0", executables, MANIFEST)
 
     def test_archive_validation_rejects_checksum_omission(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -58,7 +59,23 @@ class BetaArtifactTests(unittest.TestCase):
                     info = tarfile.TarInfo(name); info.size = len(data); out.addfile(info, io.BytesIO(data))
             _, _, executables = beta.read_plugin_identity_from_text(MANIFEST)
             with self.assertRaises(beta.ValidationError):
-                beta.validate_archive(archive, "kandev-plugin-coordinator", "0.1.0", executables)
+                beta.validate_archive(archive, "kandev-plugin-coordinator", "0.1.0", executables, MANIFEST)
+
+    def test_archive_validation_rejects_missing_required_assets(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.make_archive(root, lambda payloads: payloads.pop("ui/locales/fr.json"))
+            _, _, executables = beta.read_plugin_identity_from_text(MANIFEST)
+            with self.assertRaises(beta.ValidationError):
+                beta.validate_archive(archive, "kandev-plugin-coordinator", "0.1.0", executables, MANIFEST)
+
+    def test_archive_validation_rejects_changed_source_manifest(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.make_archive(root, lambda payloads: payloads.__setitem__("manifest.yaml", MANIFEST + b"command: changed\n"))
+            _, _, executables = beta.read_plugin_identity_from_text(MANIFEST)
+            with self.assertRaises(beta.ValidationError):
+                beta.validate_archive(archive, "kandev-plugin-coordinator", "0.1.0", executables, MANIFEST)
 
     def test_sidecar_rejects_false_pass_and_mismatched_identity(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -81,6 +98,21 @@ class BetaArtifactTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-qm", "fixture"], cwd=root, check=True)
             (root / "dirty.txt").write_text("dirty", encoding="utf-8")
             with self.assertRaises(beta.ValidationError): beta.assert_clean_committed(root)
+
+    def test_pinned_sdk_checkout_requires_exact_clean_sibling(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "plugin"; root.mkdir()
+            with self.assertRaises(beta.ValidationError):
+                beta.assert_pinned_sdk_checkout(root)
+            sdk = root.parent / "kandev"; sdk.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=sdk, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=sdk, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=sdk, check=True)
+            (sdk / "README").write_text("sdk", encoding="utf-8")
+            subprocess.run(["git", "add", "README"], cwd=sdk, check=True)
+            subprocess.run(["git", "commit", "-qm", "fixture"], cwd=sdk, check=True)
+            with self.assertRaises(beta.ValidationError):
+                beta.assert_pinned_sdk_checkout(root)
 
     def test_cli_accepts_root_after_subcommand(self):
         result = subprocess.run(
