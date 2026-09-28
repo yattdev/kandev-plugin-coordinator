@@ -114,6 +114,22 @@ class BetaArtifactTests(unittest.TestCase):
             with self.assertRaises(beta.ValidationError):
                 beta.assert_pinned_sdk_checkout(root)
 
+    def test_beta_make_targets_bind_the_pinned_sdk_over_a_caller_override(self):
+        root = Path(__file__).parents[1]
+        ordinary = subprocess.run(
+            ["make", "-n", "KANDEV_SDK=/tmp/untrusted-sdk", "package"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertIn("cd /tmp/untrusted-sdk &&", ordinary.stdout)
+        beta_target = subprocess.run(
+            ["make", "-n", "KANDEV_SDK=/tmp/untrusted-sdk", "beta-package"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(beta_target.returncode, 0, beta_target.stderr)
+        self.assertIn("cd ../kandev/apps/backend &&", beta_target.stdout)
+        self.assertNotIn("/tmp/untrusted-sdk", beta_target.stdout)
+
     def test_cli_accepts_root_after_subcommand(self):
         result = subprocess.run(
             ["python3", str(Path(__file__).with_name("beta_artifact.py")), "verify", "--root", ".", "--sidecar", "missing.json"],
