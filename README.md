@@ -113,6 +113,16 @@ make verify-contract
 make verify-package-host
 ```
 
+### Disposable beta package candidate
+
+With the exact pinned SDK sibling checkout present and a clean committed plugin
+tree, run `make reproducible-beta`. It builds the normal five-platform
+installer archive twice, compares the complete archive bytes, and writes its
+ignored validation sidecar beside the archive. See
+[`docs/beta-validation-handoff.md`](docs/beta-validation-handoff.md) for the
+sidecar schema, evidence ledger, disposable-instance procedure, and the limits
+of this check.
+
 ### Synthetic browser UI evidence
 
 `npm run test:ui:browser` runs the Coordinator page in Playwright through a

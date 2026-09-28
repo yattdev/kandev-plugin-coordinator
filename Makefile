@@ -1,5 +1,5 @@
 .PHONY: build run test test-backend build-ui test-ui test-ui-browser typecheck-ui test-recipes typecheck-recipes audit-recipes \
-	fmt vet package package-host verify-package verify-package-host verify-contract clean
+	fmt vet package package-host verify-package verify-package-host beta-package beta-artifact verify-beta-artifact reproducible-beta verify-contract clean
 
 # When you rename the plugin, update BIN and VERSION to match manifest.yaml's
 # id and version (PKG_OUT is derived from them).
@@ -7,6 +7,7 @@ BIN := bin/kandev-plugin-coordinator
 VERSION := 0.1.0
 STAGE := .build/stage
 PKG_OUT := kandev-plugin-coordinator-$(VERSION).tar.gz
+BETA_OUT := kandev-plugin-coordinator-$(VERSION).validation.json
 
 # The sibling kandev checkout the `replace` in go.mod points at (see README,
 # "Developing against the SDK"). The packaging step runs plugin-pack from
@@ -19,6 +20,11 @@ PKG_OUT := kandev-plugin-coordinator-$(VERSION).tar.gz
 # track every dependency the kandev backend grows, which `go mod tidy` then
 # fights over. Building it where it lives sidesteps all of that.
 KANDEV_SDK := ../kandev/apps/backend
+# Final beta artifacts must always use the SDK checkout that the sidecar
+# attests. Keep KANDEV_SDK configurable for ordinary development packaging,
+# but do not allow caller variables or inherited MAKEFLAGS to select a
+# different SDK on beta/reproducibility paths.
+override BETA_KANDEV_SDK := ../kandev/apps/backend
 
 ## Build the plugin binary for the host platform (development use). kandev
 ## itself always installs from `make package`/`package-host` output, not this.
@@ -155,6 +161,37 @@ verify-package-host: package-host
 			(cd "$$tmp" && shasum -a 256 -c checksums.txt); \
 		fi
 
+## Produce an installer-compatible archive and an external provenance sidecar.
+## This deliberately requires a clean committed source tree; the generated,
+## ignored archive/sidecar are the only untracked outputs it permits.
+## This target-specific override propagates to its package prerequisite and
+## takes precedence over a caller's KANDEV_SDK=... setting. It binds the
+## archive to the sibling checkout that beta_artifact.py verifies before it
+## attests provenance.
+beta-package: override KANDEV_SDK := $(BETA_KANDEV_SDK)
+beta-package: package
+
+beta-artifact: beta-package
+	python3 scripts/beta_artifact.py create --root . --archive $(PKG_OUT) --output $(BETA_OUT) \
+		--verification-command "make verify-beta-artifact"
+	$(MAKE) --no-print-directory verify-beta-artifact
+
+## Verify an existing beta archive/sidecar pair without rebuilding it.
+verify-beta-artifact:
+	python3 scripts/beta_artifact.py verify --root . --require-clean --sidecar $(BETA_OUT)
+
+## Rebuild the full archive twice from one clean source commit and compare the
+## bytes before emitting and verifying its provenance sidecar.
+reproducible-beta:
+	@set -e; first="$$(mktemp)"; trap 'rm -f "$$first"' EXIT; \
+		$(MAKE) --no-print-directory beta-package; \
+		cp "$(PKG_OUT)" "$$first"; \
+		$(MAKE) --no-print-directory beta-package; \
+		cmp -s "$$first" "$(PKG_OUT)" || { echo "reproducibility check failed: archive bytes differ" >&2; exit 1; }; \
+		python3 -c 'import hashlib, sys; print("first_sha256=" + hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()); print("second_sha256=" + hashlib.sha256(open(sys.argv[2], "rb").read()).hexdigest())' "$$first" "$(PKG_OUT)"; \
+		python3 scripts/beta_artifact.py create --root . --archive "$(PKG_OUT)" --output "$(BETA_OUT)" --verification-command "make verify-beta-artifact"; \
+		python3 scripts/beta_artifact.py verify --root . --require-clean --sidecar "$(BETA_OUT)"
+
 ## Hermetic (no network) fail-closed check that this plugin's vendored
 ## Coordinator policy contract, validator, and own defaults snapshot are all
 ## internally consistent: contract self-validation, plugin-snapshot
@@ -186,4 +223,4 @@ verify-contract:
 	find scripts -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
 clean:
-	rm -rf bin $(STAGE) kandev-plugin-coordinator-*.tar.gz
+	rm -rf bin $(STAGE) kandev-plugin-coordinator-*.tar.gz kandev-plugin-coordinator-*.validation.json
